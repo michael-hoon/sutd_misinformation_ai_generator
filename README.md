@@ -1,7 +1,6 @@
 # 🛡️ AI Misinformation Generator — Showcase Demo
 
 > **For educational and demonstration purposes only.**  
-> Part of the SUTD AI Misinformation Detection System.
 
 A locally-hosted web application that generates AI-fabricated images and videos for testing the misinformation detection pipeline. Users select a target public figure and a misinformation narrative, then the system uses Google's Gemini and Veo models to generate realistic fake media.
 
@@ -35,7 +34,9 @@ cp .env.template backend/.env
 
 ```bash
 cd backend
-pip install -r requirements.txt
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
