@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Target, Narrative } from '../api';
+import type { Target, Narrative, DriveUploadResponse } from '../api';
 import {
   generatePrompt,
   generateImage,
@@ -7,6 +7,7 @@ import {
   checkVideoStatus,
   getMediaUrl,
   getDownloadUrl,
+  uploadToDrive,
 } from '../api';
 
 interface GenerationPanelProps {
@@ -26,6 +27,9 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
   const [filename, setFilename] = useState('');
   const [error, setError] = useState('');
   const [pollingProgress, setPollingProgress] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<DriveUploadResponse | null>(null);
+  const [uploadError, setUploadError] = useState('');
 
   // Auto-generate prompt on mount
   useEffect(() => {
@@ -117,6 +121,23 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+    }
+  };
+
+  const handleUploadToDrive = async () => {
+    if (!filename) return;
+    setUploading(true);
+    setUploadError('');
+    setUploadResult(null);
+    try {
+      const result = await uploadToDrive(filename);
+      setUploadResult(result);
+    } catch (err: any) {
+      setUploadError(
+        err.response?.data?.detail || 'Failed to upload to Google Drive'
+      );
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -304,15 +325,68 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
               Download {genType === 'image' ? 'Image' : 'Video'}
             </button>
             <button
-              id="feed-to-detector-btn"
-              onClick={() => {
-                handleDownload();
-              }}
-              className="flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-accent-500 to-accent-600 hover:from-accent-400 hover:to-accent-500 rounded-xl text-white font-semibold text-sm transition-all duration-300 shadow-lg hover:shadow-accent-500/25 cursor-pointer"
+              id="upload-to-drive-btn"
+              onClick={handleUploadToDrive}
+              disabled={uploading}
+              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-semibold text-sm transition-all duration-300 shadow-lg cursor-pointer ${
+                uploading
+                  ? 'bg-accent-600/60 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-accent-500 to-accent-600 hover:from-accent-400 hover:to-accent-500 hover:shadow-accent-500/25'
+              }`}
             >
-              🔍 Download & Test with Detector
+              {uploading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Uploading…
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+                  </svg>
+                  Upload to Google Drive for Detection
+                </>
+              )}
             </button>
           </div>
+
+          {/* Upload success message */}
+          {uploadResult && (
+            <div className="mt-4 bg-green-500/10 border border-green-500/30 rounded-xl p-4 animate-fade-in">
+              <div className="flex items-start gap-3">
+                <span className="text-green-400 text-lg">✅</span>
+                <div>
+                  <p className="text-green-300 font-semibold text-sm">Uploaded to Google Drive</p>
+                  <p className="text-text-muted text-xs mt-1">
+                    File is now available for the detection system.
+                  </p>
+                  {uploadResult.web_view_link && (
+                    <a
+                      href={uploadResult.web_view_link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-brand-400 hover:text-brand-300 text-xs mt-2 transition-colors"
+                    >
+                      Open in Google Drive ↗
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Upload error message */}
+          {uploadError && (
+            <div className="mt-4 bg-red-500/10 border border-red-500/30 rounded-xl p-4 animate-fade-in">
+              <div className="flex items-start gap-3">
+                <span className="text-red-400 text-lg">⚠️</span>
+                <div>
+                  <p className="text-red-300 font-semibold text-sm">Upload Failed</p>
+                  <p className="text-red-400/80 text-xs mt-1">{uploadError}</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

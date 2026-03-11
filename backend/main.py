@@ -23,12 +23,14 @@ from google.genai import types
 
 from config import (
     GOOGLE_API_KEY,
+    GOOGLE_DRIVE_FOLDER_ID,
     PROMPT_MODEL,
     IMAGE_MODEL,
     VIDEO_MODEL,
     TARGETS,
     NARRATIVES,
 )
+from drive_upload import upload_file_to_drive
 
 # --- App Setup ---
 app = FastAPI(
@@ -323,6 +325,34 @@ async def download_file(filename: str):
         media_type=media_type,
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@app.post("/api/upload-to-drive/{filename}")
+async def upload_to_drive(filename: str):
+    """
+    Upload a generated file to the shared Google Drive folder
+    so the detection system can analyse it.
+    """
+    filepath = GENERATED_DIR / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if not GOOGLE_DRIVE_FOLDER_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="GOOGLE_DRIVE_FOLDER_ID is not configured in .env",
+        )
+
+    try:
+        result = upload_file_to_drive(filepath, filename)
+        return result
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to upload to Google Drive: {str(e)}",
+        )
 
 
 if __name__ == "__main__":

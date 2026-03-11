@@ -4,6 +4,8 @@ Contains target figures, narrative topics, and model settings.
 """
 
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -15,6 +17,17 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 PROMPT_MODEL = "gemini-3.1-flash-lite-preview"           # For prompt orchestration (text)
 IMAGE_MODEL = "gemini-3.1-flash-image-preview"  # For image generation
 VIDEO_MODEL = "veo-3.1-fast-generate-preview"   # For video generation (fast)
+
+# --- Google Drive Upload (OAuth 2.0) ---
+GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
+OAUTH_CREDENTIALS_FILE = os.getenv(
+    "OAUTH_CREDENTIALS_FILE",
+    str(Path(__file__).parent / "credentials.json"),
+)
+OAUTH_TOKEN_FILE = os.getenv(
+    "OAUTH_TOKEN_FILE",
+    str(Path(__file__).parent / "token.json"),
+)
 
 # --- Target Figures (Singapore Context) ---
 TARGETS = [

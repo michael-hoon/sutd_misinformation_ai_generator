@@ -91,3 +91,14 @@ export function getMediaUrl(path: string): string {
 export function getDownloadUrl(filename: string): string {
   return `${API_BASE}/api/download/${filename}`;
 }
+
+export interface DriveUploadResponse {
+  file_id: string;
+  web_view_link: string;
+  filename: string;
+}
+
+export async function uploadToDrive(filename: string): Promise<DriveUploadResponse> {
+  const res = await api.post(`/api/upload-to-drive/${filename}`);
+  return res.data;
+}
