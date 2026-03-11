@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+/* ============================================
+   AI Misinformation Generator - Design System
+   ============================================ */
+
+@theme {
+  /* Brand colors */
+  --color-brand-50: oklch(0.97 0.02 280);
+  --color-brand-100: oklch(0.93 0.04 280);
+  --color-brand-200: oklch(0.86 0.07 280);
+  --color-brand-300: oklch(0.76 0.12 280);
+  --color-brand-400: oklch(0.66 0.17 280);
+  --color-brand-500: oklch(0.55 0.22 280);
+  --color-brand-600: oklch(0.48 0.22 280);
+  --color-brand-700: oklch(0.40 0.19 280);
+
+  /* Accent (cyber red/coral for danger vibes) */
+  --color-accent-400: oklch(0.72 0.19 25);
+  --color-accent-500: oklch(0.63 0.24 25);
+  --color-accent-600: oklch(0.55 0.22 25);
+
+  /* Surface (dark mode) */
+  --color-surface-900: oklch(0.13 0.02 280);
+  --color-surface-800: oklch(0.17 0.02 280);
+  --color-surface-700: oklch(0.22 0.02 280);
+  --color-surface-600: oklch(0.28 0.02 280);
+
+  /* Text */
+  --color-text-primary: oklch(0.95 0 0);
+  --color-text-secondary: oklch(0.70 0 0);
+  --color-text-muted: oklch(0.50 0 0);
+}
+
+/* Base Styles */
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--color-surface-900);
+  color: var(--color-text-primary);
+  min-height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-surface-800);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-600);
+  border-radius: 3px;
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 20px oklch(0.55 0.22 280 / 0.3); }
+  50% { box-shadow: 0 0 40px oklch(0.55 0.22 280 / 0.6); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.5s ease-out forwards;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Glass card effect */
+.glass-card {
+  background: oklch(0.17 0.02 280 / 0.6);
+  backdrop-filter: blur(12px);
+  border: 1px solid oklch(0.30 0.03 280 / 0.4);
+  border-radius: 16px;
+  transition: all 0.3s ease;
+}
+
+.glass-card:hover {
+  border-color: oklch(0.55 0.22 280 / 0.5);
+  background: oklch(0.20 0.03 280 / 0.7);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px oklch(0.55 0.22 280 / 0.15);
+}
+
+.glass-card.selected {
+  border-color: var(--color-brand-400);
+  background: oklch(0.22 0.05 280 / 0.7);
+  box-shadow: 0 0 24px oklch(0.55 0.22 280 / 0.25);
+}
