@@ -238,7 +238,6 @@ async def generate_video(request: GenerateVideoRequest):
             prompt=request.prompt,
             config=types.GenerateVideosConfig(
                 aspect_ratio="16:9",
-                person_generation="allow_adult",
             ),
         )
 
