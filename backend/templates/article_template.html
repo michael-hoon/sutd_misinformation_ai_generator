@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{headline}}</title>
+    <meta property="og:title" content="{{headline}}">
+    <meta property="og:image" content="{{image_url}}">
+    <meta property="og:description" content="{{headline}}">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Georgia, 'Times New Roman', serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            background-color: #1a1a1a;
+            color: white;
+            padding: 20px 30px;
+            border-bottom: 3px solid #dc2626;
+        }
+
+        .publication {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .tagline {
+            font-size: 0.85em;
+            color: #aaa;
+        }
+
+        .article-content {
+            padding: 30px;
+        }
+
+        .headline {
+            font-size: 2.2em;
+            font-weight: bold;
+            line-height: 1.2;
+            margin-bottom: 15px;
+            color: #1a1a1a;
+        }
+
+        .meta {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #e5e5e5;
+        }
+
+        .author {
+            font-weight: bold;
+        }
+
+        .date {
+            color: #888;
+        }
+
+        .featured-image {
+            width: 100%;
+            height: auto;
+            margin: 25px 0;
+            border-radius: 4px;
+        }
+
+        .article-body {
+            font-size: 1.1em;
+            line-height: 1.8;
+            color: #2d2d2d;
+        }
+
+        .article-body p {
+            margin-bottom: 20px;
+        }
+
+        .disclaimer {
+            background: linear-gradient(135deg, #fff3cd 0%, #ffe4a1 100%);
+            padding: 20px;
+            margin: 30px 0 0 0;
+            border-left: 5px solid #dc2626;
+            border-radius: 4px;
+        }
+
+        .disclaimer strong {
+            color: #dc2626;
+            font-size: 1.1em;
+        }
+
+        .disclaimer p {
+            margin-top: 10px;
+            color: #666;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            font-size: 0.95em;
+        }
+
+        .footer {
+            background-color: #2d2d2d;
+            color: #aaa;
+            padding: 20px 30px;
+            text-align: center;
+            font-size: 0.85em;
+        }
+
+        @media (max-width: 768px) {
+            .headline {
+                font-size: 1.6em;
+            }
+
+            .article-content {
+                padding: 20px;
+            }
+
+            .article-body {
+                font-size: 1em;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="publication">{{publication}}</div>
+            <div class="tagline">Breaking News & Latest Updates</div>
+        </header>
+
+        <div class="article-content">
+            <h1 class="headline">{{headline}}</h1>
+
+            <div class="meta">
+                <span class="author">By {{author}}</span>
+                <span class="separator"> | </span>
+                <span class="date">{{date}}</span>
+            </div>
+
+            <img src="{{image_url}}" class="featured-image" alt="{{headline}}">
+
+            <div class="article-body">
+                {{body}}
+            </div>
+
+        </div>
+
+        <footer class="footer">
+            <p>© {{year}} {{publication}} | AI-Generated Demo Content</p>
+        </footer>
+    </div>
+</body>
+
+</html>

@@ -27,6 +27,9 @@ export interface PromptResponse {
   prompt: string;
   target: Target;
   narrative: Narrative;
+  // For articles: dual coordinated prompts
+  image_prompt?: string;
+  article_prompt?: string;
 }
 
 export interface ImageResponse {
@@ -59,12 +62,15 @@ export async function fetchNarratives(): Promise<Narrative[]> {
 export async function generatePrompt(
   targetId: string,
   narrativeId: string,
-  generationType: 'image' | 'video'
+  generationType: 'image' | 'video' | 'article',
+  signal?: AbortSignal
 ): Promise<PromptResponse> {
   const res = await api.post('/api/generate-prompt', {
     target_id: targetId,
     narrative_id: narrativeId,
     generation_type: generationType,
+  }, {
+    signal, // Pass abort signal to cancel request
   });
   return res.data;
 }
@@ -98,7 +104,46 @@ export interface DriveUploadResponse {
   filename: string;
 }
 
+export interface ArticleResponse {
+  article_id: string;
+  article_url: string;
+  headline: string;
+  image_url: string;
+  published_url: string | null;
+}
+
+export interface PublishResponse {
+  article_id: string;
+  published_url: string;
+  headline: string;
+  message: string;
+}
+
 export async function uploadToDrive(filename: string): Promise<DriveUploadResponse> {
   const res = await api.post(`/api/upload-to-drive/${filename}`);
   return res.data;
+}
+
+export async function generateArticle(
+  targetId: string,
+  narrativeId: string,
+  imagePrompt: string,
+  articlePrompt: string
+): Promise<ArticleResponse> {
+  const res = await api.post('/api/generate-article', {
+    target_id: targetId,
+    narrative_id: narrativeId,
+    image_prompt: imagePrompt,
+    article_prompt: articlePrompt,
+  });
+  return res.data;
+}
+
+export async function publishArticle(articleId: string): Promise<PublishResponse> {
+  const res = await api.post(`/api/publish-article/${articleId}`);
+  return res.data;
+}
+
+export function getArticleUrl(path: string): string {
+  return `${API_BASE}${path}`;
 }

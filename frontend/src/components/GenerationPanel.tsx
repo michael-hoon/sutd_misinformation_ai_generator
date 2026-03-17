@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Target, Narrative, DriveUploadResponse } from '../api';
+import type { Target, Narrative, DriveUploadResponse, ArticleResponse, PublishResponse } from '../api';
 import {
   generatePrompt,
   generateImage,
   generateVideo,
+  generateArticle,
+  publishArticle,
   checkVideoStatus,
   getMediaUrl,
   getDownloadUrl,
+  getArticleUrl,
   uploadToDrive,
 } from '../api';
 
@@ -16,13 +19,18 @@ interface GenerationPanelProps {
   onReset: () => void;
 }
 
-type GenerationType = 'image' | 'video';
-type GenerationStatus = 'idle' | 'generating-prompt' | 'prompt-ready' | 'generating-media' | 'polling-video' | 'complete' | 'error';
+type GenerationType = 'image' | 'video' | 'article';
+type GenerationStatus = 'idle' | 'generating-prompt' | 'prompt-ready' | 'generating-media' | 'generating-article' | 'polling-video' | 'complete' | 'error';
 
 export default function GenerationPanel({ target, narrative, onReset }: GenerationPanelProps) {
   const [genType, setGenType] = useState<GenerationType>('image');
   const [status, setStatus] = useState<GenerationStatus>('idle');
   const [prompt, setPrompt] = useState('');
+
+  // Article dual prompts
+  const [imagePrompt, setImagePrompt] = useState('');
+  const [articlePrompt, setArticlePrompt] = useState('');
+
   const [mediaUrl, setMediaUrl] = useState('');
   const [filename, setFilename] = useState('');
   const [error, setError] = useState('');
@@ -31,19 +39,48 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
   const [uploadResult, setUploadResult] = useState<DriveUploadResponse | null>(null);
   const [uploadError, setUploadError] = useState('');
 
-  // Auto-generate prompt on mount
-  useEffect(() => {
-    handleGeneratePrompt();
-  }, []);
+  // Article-specific state
+  const [articleData, setArticleData] = useState<ArticleResponse | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState<PublishResponse | null>(null);
 
-  const handleGeneratePrompt = async () => {
+  // Auto-generate prompt on mount and when genType changes
+  useEffect(() => {
+    const abortController = new AbortController();
+
+    // Debounce: wait 100ms before firing to prevent rapid tab switching issues
+    const timeoutId = setTimeout(() => {
+      handleGeneratePrompt(abortController.signal);
+    }, 100);
+
+    // Cleanup: cancel request and timeout on unmount or genType change
+    return () => {
+      clearTimeout(timeoutId);
+      abortController.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [genType]);
+
+  const handleGeneratePrompt = async (signal?: AbortSignal) => {
     setStatus('generating-prompt');
     setError('');
     try {
-      const result = await generatePrompt(target.id, narrative.id, genType);
-      setPrompt(result.prompt);
+      const result = await generatePrompt(target.id, narrative.id, genType, signal);
+
+      // Handle dual prompts for articles
+      if (genType === 'article' && result.image_prompt && result.article_prompt) {
+        setImagePrompt(result.image_prompt);
+        setArticlePrompt(result.article_prompt);
+      } else {
+        setPrompt(result.prompt);
+      }
+
       setStatus('prompt-ready');
     } catch (err: any) {
+      // Ignore aborted requests (user switched tabs)
+      if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED') {
+        return;
+      }
       setError(err.response?.data?.detail || 'Failed to generate prompt');
       setStatus('error');
     }
@@ -61,10 +98,15 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
         setMediaUrl(getMediaUrl(result.image_url));
         setFilename(result.filename);
         setStatus('complete');
-      } else {
+      } else if (genType === 'video') {
         const result = await generateVideo(prompt);
         setStatus('polling-video');
         pollVideoStatus(result.operation_id);
+      } else if (genType === 'article') {
+        setStatus('generating-article');
+        const result = await generateArticle(target.id, narrative.id, imagePrompt, articlePrompt);
+        setArticleData(result);
+        setStatus('complete');
       }
     } catch (err: any) {
       setError(err.response?.data?.detail || `Failed to generate ${genType}`);
@@ -141,6 +183,20 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
     }
   };
 
+  const handlePublishArticle = async () => {
+    if (!articleData) return;
+    setPublishing(true);
+    setError('');
+    try {
+      const result = await publishArticle(articleData.article_id);
+      setPublishResult(result);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to publish article');
+    } finally {
+      setPublishing(false);
+    }
+  };
+
   return (
     <div className="animate-fade-in">
       {/* Header with selection summary */}
@@ -174,24 +230,32 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
           <button
             id="toggle-image"
             onClick={() => setGenType('image')}
-            className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 cursor-pointer ${
-              genType === 'image'
-                ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
+            className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 cursor-pointer ${genType === 'image'
+              ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25'
+              : 'text-text-secondary hover:text-text-primary'
+              }`}
           >
             🖼️ Image
           </button>
           <button
             id="toggle-video"
             onClick={() => setGenType('video')}
-            className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 cursor-pointer ${
-              genType === 'video'
-                ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
+            className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 cursor-pointer ${genType === 'video'
+              ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25'
+              : 'text-text-secondary hover:text-text-primary'
+              }`}
           >
             🎬 Video
+          </button>
+          <button
+            id="toggle-article"
+            onClick={() => setGenType('article')}
+            className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 cursor-pointer ${genType === 'article'
+              ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25'
+              : 'text-text-secondary hover:text-text-primary'
+              }`}
+          >
+            📰 Article
           </button>
         </div>
       </div>
@@ -200,12 +264,12 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
       <div className="glass-card p-6 mb-6">
         <div className="flex items-center justify-between mb-3">
           <label className="text-sm font-semibold text-text-secondary uppercase tracking-wider">
-            AI-Generated Prompt
+            AI-Generated Prompt {genType === 'article' && '(for reference)'}
           </label>
           {status !== 'generating-prompt' && (
             <button
               id="regenerate-prompt-btn"
-              onClick={handleGeneratePrompt}
+              onClick={() => handleGeneratePrompt()}
               className="text-xs text-brand-400 hover:text-brand-300 transition-colors cursor-pointer font-medium"
             >
               ↻ Regenerate
@@ -216,7 +280,36 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
         {status === 'generating-prompt' ? (
           <div className="flex items-center gap-3 py-8 justify-center">
             <div className="w-5 h-5 border-2 border-brand-400/30 border-t-brand-400 rounded-full animate-spin" />
-            <span className="text-text-secondary text-sm">Gemini is crafting your prompt...</span>
+            <span className="text-text-secondary text-sm">Gemini is crafting your prompt{genType === 'article' ? 's' : ''}...</span>
+          </div>
+        ) : genType === 'article' ? (
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2 block">
+                🖼️ Image Prompt
+              </label>
+              <textarea
+                id="image-prompt-editor"
+                value={imagePrompt}
+                onChange={(e) => setImagePrompt(e.target.value)}
+                rows={4}
+                className="w-full bg-surface-900/50 text-text-primary border border-surface-600 rounded-xl px-4 py-3 text-sm leading-relaxed focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400/20 resize-y transition-colors"
+                placeholder="Visual description for the article image..."
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2 block">
+                📝 Article Content Prompt
+              </label>
+              <textarea
+                id="article-prompt-editor"
+                value={articlePrompt}
+                onChange={(e) => setArticlePrompt(e.target.value)}
+                rows={5}
+                className="w-full bg-surface-900/50 text-text-primary border border-surface-600 rounded-xl px-4 py-3 text-sm leading-relaxed focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400/20 resize-y transition-colors"
+                placeholder="Scenario description for article text generation..."
+              />
+            </div>
           </div>
         ) : (
           <textarea
@@ -228,10 +321,15 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
             placeholder="The AI-generated prompt will appear here..."
           />
         )}
+        {genType === 'article' && (
+          <p className="text-xs text-text-muted mt-2">
+            💡 Both prompts describe the same story - one for the image, one for the article text.
+          </p>
+        )}
       </div>
 
       {/* Generate button */}
-      {(status === 'prompt-ready' || status === 'error') && prompt && (
+      {((status === 'prompt-ready' || status === 'error') && prompt && genType !== 'article') && (
         <div className="flex justify-center mb-8">
           <button
             id="generate-media-btn"
@@ -246,8 +344,23 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
         </div>
       )}
 
+      {/* Generate Article button - shown immediately for article type */}
+      {genType === 'article' && (status === 'prompt-ready' || status === 'error') && imagePrompt && articlePrompt && (
+        <div className="flex justify-center mb-8">
+          <button
+            id="generate-article-btn"
+            onClick={handleGenerate}
+            className="group relative px-10 py-4 bg-gradient-to-r from-brand-500 to-brand-600 rounded-xl text-white font-bold text-base hover:from-brand-400 hover:to-brand-500 transition-all duration-300 shadow-[0_4px_24px_oklch(0.55_0.22_280/0.3)] hover:shadow-[0_8px_40px_oklch(0.55_0.22_280/0.5)] hover:scale-105 active:scale-95 cursor-pointer"
+          >
+            <span className="flex items-center gap-2">
+              📰 Generate Article with Image
+            </span>
+          </button>
+        </div>
+      )}
+
       {/* Loading state */}
-      {(status === 'generating-media' || status === 'polling-video') && (
+      {(status === 'generating-media' || status === 'generating-article' || status === 'polling-video') && (
         <div className="glass-card p-8 mb-6 text-center animate-pulse-glow">
           <div className="flex flex-col items-center gap-4">
             <div className="w-16 h-16 border-4 border-brand-400/20 border-t-brand-400 rounded-full animate-spin" />
@@ -256,7 +369,9 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
                 ? genType === 'image'
                   ? 'Generating image...'
                   : 'Starting video generation...'
-                : 'Generating video (this can take a few minutes)...'
+                : status === 'generating-article'
+                  ? 'Generating article with image (this may take a moment)...'
+                  : 'Generating video (this can take a few minutes)...'
               }
             </p>
             {status === 'polling-video' && (
@@ -290,8 +405,82 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
         </div>
       )}
 
-      {/* Result display */}
-      {status === 'complete' && mediaUrl && (
+      {/* Result display - Articles */}
+      {status === 'complete' && genType === 'article' && articleData && (
+        <div className="glass-card p-6 mb-6 animate-slide-up">
+          <h3 className="text-sm uppercase tracking-wider text-text-muted mb-4 font-semibold">Generated Article</h3>
+
+          <div className="bg-surface-900 border border-surface-600 rounded-xl overflow-hidden mb-4">
+            <iframe
+              id="generated-article"
+              src={getArticleUrl(articleData.article_url)}
+              className="w-full h-[600px] border-0"
+              title="Generated Article"
+            />
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <a
+              href={getArticleUrl(articleData.article_url)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 rounded-xl text-white font-semibold text-sm transition-all duration-300 shadow-lg hover:shadow-blue-500/25 cursor-pointer"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              Open Article in New Tab
+            </a>
+            <button
+              id="publish-article-btn"
+              onClick={handlePublishArticle}
+              disabled={publishing}
+              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-semibold text-sm transition-all duration-300 shadow-lg cursor-pointer ${publishing
+                ? 'bg-accent-600/60 cursor-not-allowed'
+                : 'bg-gradient-to-r from-accent-500 to-accent-600 hover:from-accent-400 hover:to-accent-500 hover:shadow-accent-500/25'
+                }`}
+            >
+              {publishing ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Publishing…
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  Publish Article
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Publish success message */}
+          {publishResult && (
+            <div className="mt-4 bg-green-500/10 border border-green-500/30 rounded-xl p-4 animate-fade-in">
+              <div className="flex items-start gap-3">
+                <span className="text-green-400 text-lg">✅</span>
+                <div className="flex-1">
+                  <p className="text-green-300 font-semibold text-sm">Article Published</p>
+                  <p className="text-text-muted text-xs mt-1">{publishResult.message}</p>
+                  <a
+                    href={publishResult.published_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-brand-400 hover:text-brand-300 text-xs mt-2 transition-colors"
+                  >
+                    View Published Article ↗
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Result display - Image/Video */}
+      {status === 'complete' && genType !== 'article' && mediaUrl && (
         <div className="glass-card p-6 mb-6 animate-slide-up">
           <h3 className="text-sm uppercase tracking-wider text-text-muted mb-4 font-semibold">Generated Result</h3>
 
@@ -328,11 +517,10 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
               id="upload-to-drive-btn"
               onClick={handleUploadToDrive}
               disabled={uploading}
-              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-semibold text-sm transition-all duration-300 shadow-lg cursor-pointer ${
-                uploading
-                  ? 'bg-accent-600/60 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-accent-500 to-accent-600 hover:from-accent-400 hover:to-accent-500 hover:shadow-accent-500/25'
-              }`}
+              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-semibold text-sm transition-all duration-300 shadow-lg cursor-pointer ${uploading
+                ? 'bg-accent-600/60 cursor-not-allowed'
+                : 'bg-gradient-to-r from-accent-500 to-accent-600 hover:from-accent-400 hover:to-accent-500 hover:shadow-accent-500/25'
+                }`}
             >
               {uploading ? (
                 <>
@@ -342,7 +530,7 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
               ) : (
                 <>
                   <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
+                    <path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" />
                   </svg>
                   Upload to Google Drive for Detection
                 </>

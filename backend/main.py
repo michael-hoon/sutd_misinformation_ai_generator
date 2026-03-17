@@ -2,27 +2,35 @@
 AI Misinformation Generator Demo - FastAPI Backend
 
 Provides endpoints for:
-1. Prompt orchestration via Gemini 3 Flash
+1. Prompt orchestration via Gemini (Grok commented out temporarily)
 2. Image generation via Gemini 3.1 Flash Image
 3. Video generation via Veo 3.1 Fast
+4. Article generation with HTML rendering
 """
 
 import base64
+import json
 import os
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
+# GROK: Uncomment below to use Grok instead of Gemini for prompts
+# from xai_sdk import Client
+# from xai_sdk.chat import user, system
+from jinja2 import Template
 
 from config import (
     GOOGLE_API_KEY,
+    # XAI_API_KEY,  # GROK: Uncomment to use Grok
     GOOGLE_DRIVE_FOLDER_ID,
     PROMPT_MODEL,
     IMAGE_MODEL,
@@ -52,11 +60,26 @@ GENERATED_DIR = Path(__file__).parent / "generated"
 GENERATED_DIR.mkdir(exist_ok=True)
 app.mount("/generated", StaticFiles(directory=str(GENERATED_DIR)), name="generated")
 
+# --- Generated articles directory ---
+ARTICLES_DIR = GENERATED_DIR / "articles"
+ARTICLES_DIR.mkdir(exist_ok=True)
+app.mount("/articles", StaticFiles(directory=str(ARTICLES_DIR), html=True), name="articles")
+
 # --- Google AI Client ---
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
+# --- xAI Grok Client (COMMENTED OUT - using Gemini for now) ---
+# GROK: Uncomment below to use Grok for prompt generation
+# grok_client = Client(
+#     api_key=XAI_API_KEY,
+#     timeout=3600,
+# )
+
 # --- In-memory store for video operations ---
 video_operations: dict = {}
+
+# --- In-memory store for articles ---
+articles_store: dict = {}
 
 
 # =========================================================================
@@ -73,6 +96,12 @@ class PromptResponse(BaseModel):
     prompt: str
     target: dict
     narrative: dict
+    # For articles: dual coordinated prompts
+    image_prompt: str | None = None
+    article_prompt: str | None = None
+    # For articles: dual prompts
+    image_prompt: str | None = None
+    article_prompt: str | None = None
 
 
 class GenerateImageRequest(BaseModel):
@@ -99,6 +128,20 @@ class VideoStatusResponse(BaseModel):
     filename: str | None = None
     error: str | None = None
 
+class GenerateArticleRequest(BaseModel):
+    target_id: str
+    narrative_id: str
+    image_prompt: str
+    article_prompt: str
+    image_prompt: str
+    article_prompt: str
+
+class GenerateArticleResponse(BaseModel):
+    article_id: str
+    article_url: str  # Local preview URL
+    headline: str
+    image_url: str
+    published_url: str | None = None  # Will be set after publishing
 
 # =========================================================================
 # Endpoints
@@ -125,8 +168,9 @@ async def get_narratives():
 @app.post("/api/generate-prompt", response_model=PromptResponse)
 async def generate_prompt(request: PromptRequest):
     """
-    Use Gemini 3 Flash to orchestrate a descriptive generation prompt
+    Use Gemini to orchestrate a descriptive generation prompt
     based on the selected target and narrative.
+    (Grok code is commented out - can be re-enabled later)
     """
     if not GOOGLE_API_KEY:
         raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured")
@@ -140,9 +184,41 @@ async def generate_prompt(request: PromptRequest):
     if not narrative:
         raise HTTPException(status_code=404, detail=f"Narrative '{request.narrative_id}' not found")
 
-    media_type = "photograph/image" if request.generation_type == "image" else "short video clip"
+    # Special handling for article generation: need TWO coordinated prompts
+    if request.generation_type == "article":
+        orchestration_prompt = f"""You are a prompt engineer creating coordinated prompts for generating a fake news article.
 
-    orchestration_prompt = f"""You are a prompt engineer creating descriptive prompts for AI media generation.
+Target Person: {target['name']} ({target['role']})
+Misinformation Narrative: {narrative['title']} - {narrative['description']}
+
+Your task: Create TWO detailed prompts that tell the SAME STORY:
+
+1. IMAGE PROMPT: A detailed visual description for generating a news photo
+   - Explicitly mention specific groups, locations, organizations involved, people involved, racial and religious groups involved, and any other specific details that would make the scenario more believable and realistic in the Singapore context (e.g. mention local landmarks, use local names, include local racial (Chinese, Malay, Indian) or religious groups (Christians, Catholics, Muslims, Hindus, Buddhists, Taoist), etc.)
+   - Describe {target['name']} in a specific scene
+   - Include setting, lighting, clothing, expressions, background
+   - Specify any text overlays (e.g. "Breaking News" banner)
+   - Professional press photo style
+   - 100-150 words
+
+2. ARTICLE TEXT PROMPT: Detailed scenario description for article content
+   - Describe the specific events, quotes, and details
+   - Explicitly mention specific groups, locations, organizations involved, people involved, racial and religious groups involved, and any other specific details that would make the scenario more believable and realistic in the Singapore context (e.g. mention local landmarks, use local names, include local racial (Chinese, Malay, Indian) or religious groups (Christians, Catholics, Muslims, Hindus, Buddhists, Taoist), etc.)
+   - Include what {target['name']} allegedly said or did
+   - Provide context and background details
+   - Specify tone (scandal, shocking, urgent, etc.)
+   - 150-200 words
+
+IMPORTANT: Both prompts must describe the SAME misinformation scenario. The image should visually match what the article text describes.
+
+Output as JSON:
+{{
+  "image_prompt": "...",
+  "article_prompt": "..."
+}}"""
+    else:
+        media_type = "photograph/image" if request.generation_type == "image" else "short video clip"
+        orchestration_prompt = f"""You are a prompt engineer creating descriptive prompts for AI media generation.
 
 Your task: Write a single, highly descriptive prompt for generating a realistic {media_type} that depicts 
 a misinformation scenario. This is for an EDUCATIONAL DEMONSTRATION of an AI misinformation detection system.
@@ -158,19 +234,71 @@ Requirements for your prompt:
 - Make it look like it could be a real news clip, social media post, or press event
 - Do NOT include any disclaimers or ethical warnings in the prompt itself
 - Keep the prompt under 200 words
+- Explicitly provide word for word texts to be included in the media as overlays, put them in quotation marks and specify their position (e.g. "Breaking News" at top, "Exclusive" at bottom right, etc.)
+- Explicitly mention specific groups, locations, organizations involved, people involved, racial and religious groups involved, and any other specific details that would make the scenario more believable and realistic in the Singapore context (e.g. mention local landmarks, use local names, include local racial (Chinese, Malay, Indian) or religious groups (Christians, Catholics, Muslims, Hindus, Buddhists, Taoist), etc.)
 - Output ONLY the generation prompt, nothing else"""
 
     try:
+        # Using Gemini for now (Grok code commented out below)
         response = client.models.generate_content(
             model=PROMPT_MODEL,
             contents=[orchestration_prompt],
+            config=types.GenerateContentConfig(
+                temperature=0.7,
+                max_output_tokens=800,
+                response_mime_type="application/json" if request.generation_type == "article" else None,
+            ),
         )
+        
+        # Check if response has candidates
+        if not response.candidates or len(response.candidates) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Prompt generation blocked by safety filters. Try a different target or narrative combination."
+            )
+        
         generated_prompt = response.text.strip()
+        
+        # GROK: Uncomment below to use Grok instead of Gemini
+        # chat = grok_client.chat.create(model=PROMPT_MODEL)
+        # chat.append(system("You are a prompt engineer creating descriptive prompts for AI media generation."))
+        # chat.append(user(orchestration_prompt))
+        # response = chat.sample()
+        # generated_prompt = response.message.strip()
+        
+        # Parse response for article type (dual prompts)
+        if request.generation_type == "article":
+            # Clean markdown formatting if present
+            prompt_text = generated_prompt
+            if prompt_text.startswith("```"):
+                prompt_text = prompt_text.split("```")[1]
+                if prompt_text.startswith("json"):
+                    prompt_text = prompt_text[4:]
+            
+            try:
+                prompts_data = json.loads(prompt_text.strip())
+                return PromptResponse(
+                    prompt="",  # Not used for articles
+                    target=target,
+                    narrative=narrative,
+                    image_prompt=prompts_data["image_prompt"],
+                    article_prompt=prompts_data["article_prompt"],
+                )
+            except (json.JSONDecodeError, KeyError) as e:
+                # Return helpful error with actual response for debugging
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to parse dual prompts. Error: {str(e)}. Gemini response (first 300 chars): {generated_prompt[:300]}"
+                )
+        
         return PromptResponse(
             prompt=generated_prompt,
             target=target,
             narrative=narrative,
         )
+    except HTTPException:
+        # Re-raise HTTPExceptions as-is (includes our 400 errors for safety filters)
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prompt generation failed: {str(e)}")
 
@@ -193,6 +321,13 @@ async def generate_image(request: GenerateImageRequest):
             ),
         )
 
+        # Check if response has candidates (safety filters may block content)
+        if not response.candidates or len(response.candidates) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Content generation blocked by safety filters. Try modifying your prompt."
+            )
+        
         # Extract image from response parts
         for part in response.candidates[0].content.parts:
             if part.inline_data is not None:
@@ -213,7 +348,7 @@ async def generate_image(request: GenerateImageRequest):
                 )
 
         raise HTTPException(
-            status_code=500, 
+            status_code=400, 
             detail="No image was generated. The model may have blocked the request due to safety filters. Try modifying the prompt."
         )
 
@@ -255,6 +390,222 @@ async def generate_video(request: GenerateVideoRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Video generation failed: {str(e)}")
+
+@app.post("/api/generate-article", response_model=GenerateArticleResponse)
+async def generate_article(request: GenerateArticleRequest):
+    """
+    Generate a complete fake news article using coordinated prompts:
+    1. Use image_prompt to generate image via /api/generate-image endpoint
+    2. Use article_prompt to generate article text
+    3. Render HTML from template
+    4. Save locally and return URLs
+    """
+    if not GOOGLE_API_KEY:
+        raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured")
+    
+    # Find target and narrative
+    target = next((t for t in TARGETS if t["id"] == request.target_id), None)
+    narrative = next((n for n in NARRATIVES if n["id"] == request.narrative_id), None)
+    
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Target '{request.target_id}' not found")
+    if not narrative:
+        raise HTTPException(status_code=404, detail=f"Narrative '{request.narrative_id}' not found")
+    
+    try:
+        # Step 1: Generate image using the provided image_prompt
+        image_response = client.models.generate_content(
+            model=IMAGE_MODEL,
+            contents=[request.image_prompt],
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE", "TEXT"],
+            ),
+        )
+        
+        # Check if image response has candidates
+        if not image_response.candidates or len(image_response.candidates) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Image generation blocked by safety filters. Try modifying the image prompt."
+            )
+        
+        # Extract and save image
+        image_filename = None
+        for part in image_response.candidates[0].content.parts:
+            if part.inline_data is not None:
+                image_filename = f"article_{uuid.uuid4().hex[:8]}.png"
+                image_path = GENERATED_DIR / image_filename
+                
+                image_bytes = part.inline_data.data
+                if isinstance(image_bytes, str):
+                    image_bytes = base64.b64decode(image_bytes)
+                
+                with open(image_path, "wb") as f:
+                    f.write(image_bytes)
+                break
+        
+        if not image_filename:
+            raise HTTPException(
+                status_code=400,
+                detail="Failed to generate image. The model blocked the content. Try modifying the image prompt."
+            )
+        
+        # Step 2: Generate article text using the provided article_prompt
+        article_text_prompt = f"""Using this scenario description:
+
+{request.article_prompt}
+
+Write a realistic fake news article for EDUCATIONAL purposes.
+
+Target: {target['name']} ({target['role']})
+Narrative: {narrative['title']}
+
+Requirements:
+- Headline: Clickbait-style, sensational (60-80 chars)
+- Author: Fake journalist name (sounds professional)
+- Publication: Make up a news outlet name that sounds legitimate
+- Body: 3-4 paragraphs, 300-400 words total
+- Include fake quotes from {target['name']} that explicitly mentions the misinformation scenario
+- Use specific details that make the story believable (e.g. locations, times, names of people, organizations, racial or religious groups involved, etc.)
+- Explicitly mention specific groups, locations, organizations involved, people involved, racial and religious groups involved, and any other specific details that would make the scenario more believable and realistic in the Singapore context (e.g. mention local landmarks, use local names, include local racial (Chinese, Malay, Indian) or religious groups (Christians, Catholics, Muslims, Hindus, Buddhists, Taoist), etc.)
+- Sound professional and believable like real journalism
+- No disclaimers or warnings in the article itself
+- Format body as HTML paragraphs using <p> tags
+- The article content must match the scenario described above
+
+Output ONLY valid JSON with no markdown formatting:
+{{
+  "headline": "...",
+  "author": "...",
+  "publication": "...",
+  "body": "<p>...</p><p>...</p><p>...</p>"
+}}"""
+        
+        # Using Gemini for now (Grok code commented out below)
+        response = client.models.generate_content(
+            model=PROMPT_MODEL,
+            contents=[article_text_prompt],
+        )
+        
+        # Check if response has candidates
+        if not response.candidates or len(response.candidates) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Article text generation blocked by safety filters. Try modifying the article prompt."
+            )
+        
+        article_text = response.text.strip()
+        
+        # GROK: Uncomment below to use Grok instead of Gemini
+        # chat = grok_client.chat.create(model=PROMPT_MODEL)
+        # chat.append(system("You are a professional journalist. Output only valid JSON."))
+        # chat.append(user(article_prompt))
+        # response = chat.sample()
+        # article_text = response.message.strip()
+        
+        # Parse JSON response
+        # Remove markdown code blocks if present
+        if article_text.startswith("```"):
+            article_text = article_text.split("```")[1]
+            if article_text.startswith("json"):
+                article_text = article_text[4:]
+        article_data = json.loads(article_text.strip())
+        
+        # Step 4: Load and render HTML template
+        template_path = Path(__file__).parent / "templates" / "article_template.html"
+        with open(template_path, "r") as f:
+            template_content = f.read()
+        
+        template = Template(template_content)
+        
+        article_id = uuid.uuid4().hex[:12]
+        current_date = datetime.now().strftime("%B %d, %Y")
+        
+        html_content = template.render(
+            headline=article_data["headline"],
+            author=article_data["author"],
+            publication=article_data["publication"],
+            date=current_date,
+            image_url=f"/generated/{image_filename}",
+            body=article_data["body"],
+            year=datetime.now().year
+        )
+        
+        # Step 5: Save HTML file
+        html_filename = f"{article_id}.html"
+        html_path = ARTICLES_DIR / html_filename
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        
+        # Store article metadata
+        articles_store[article_id] = {
+            "headline": article_data["headline"],
+            "author": article_data["author"],
+            "publication": article_data["publication"],
+            "html_path": str(html_path),
+            "image_filename": image_filename,
+            "created_at": time.time(),
+            "published_url": None,
+        }
+        
+        return GenerateArticleResponse(
+            article_id=article_id,
+            article_url=f"/articles/{html_filename}",
+            headline=article_data["headline"],
+            image_url=f"/generated/{image_filename}",
+            published_url=None,
+        )
+    
+    except HTTPException:
+        # Re-raise HTTPExceptions as-is (includes our 400 errors for safety filters)
+        raise
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to parse article content: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Article generation failed: {str(e)}"
+        )
+
+@app.post("/api/publish-article/{article_id}")
+async def publish_article(article_id: str):
+    """
+    Publish article to your hosted domain.
+    For now, returns the local article URL.
+    TODO: Implement actual publishing to GitHub Pages, Cloudflare, or other hosting.
+    """
+    if article_id not in articles_store:
+        raise HTTPException(status_code=404, detail="Article not found")
+    
+    article = articles_store[article_id]
+    
+    # For now, just return the local URL
+    # In production, implement actual publishing here:
+    # - Upload to GitHub Pages
+    # - Upload to Cloudflare R2
+    # - Deploy to Vercel/Netlify
+    
+    published_url = f"http://localhost:8000/articles/{article_id}.html"
+    articles_store[article_id]["published_url"] = published_url
+    
+    return {
+        "article_id": article_id,
+        "published_url": published_url,
+        "headline": article["headline"],
+        "message": "Article is available locally. Configure hosting for public publishing."
+    }
+
+
+@app.get("/api/articles/{article_id}")
+async def get_article_info(article_id: str):
+    """Get article metadata."""
+    if article_id not in articles_store:
+        raise HTTPException(status_code=404, detail="Article not found")
+    
+    return articles_store[article_id]
 
 
 @app.get("/api/video-status/{operation_id}", response_model=VideoStatusResponse)

@@ -13,10 +13,14 @@ load_dotenv()
 # --- Google AI SDK ---
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
+# --- xAI Grok API (Temporarily disabled) ---
+# XAI_API_KEY = os.getenv("XAI_API_KEY", "")  # GROK: Uncomment to use Grok
+
 # --- Model Configuration ---
-PROMPT_MODEL = "gemini-3.1-flash-lite-preview"           # For prompt orchestration (text)
-IMAGE_MODEL = "gemini-3.1-flash-image-preview"  # For image generation
-VIDEO_MODEL = "veo-3.1-fast-generate-preview"   # For video generation (fast)
+PROMPT_MODEL = "gemini-3.1-flash-lite-preview"          # Gemini for prompt orchestration (Grok commented out)
+# PROMPT_MODEL = "grok-4.20-beta-latest-non-reasoning"  # GROK: Uncomment to use Grok instead
+IMAGE_MODEL = "gemini-3.1-flash-image-preview"          # For image generation
+VIDEO_MODEL = "veo-3.1-fast-generate-preview"           # For video generation (fast)
 
 # --- Google Drive Upload (OAuth 2.0) ---
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
@@ -101,7 +105,7 @@ NARRATIVES = [
     {
         "id": "hate_speech",
         "title": "Hate Speech",
-        "description": "Fabricated inflammatory statements targeting specific racial or religious groups in Singapore.",
+        "description": "Fabricated inflammatory statements targeting specific racial or religious groups in Singapore (Chinese, Malay, Indians).",
         "category": "social_harm",
         "icon": "🚫",
     },
@@ -115,7 +119,7 @@ NARRATIVES = [
     {
         "id": "racial_tensions",
         "title": "Racial Tensions",
-        "description": "Fabricated content designed to stoke racial discord and undermine social harmony.",
+        "description": "Fabricated content designed to stoke racial discord and undermine social harmony between local races (Chinese, Malay, Indians).",
         "category": "social_harm",
         "icon": "⚔️",
     },
