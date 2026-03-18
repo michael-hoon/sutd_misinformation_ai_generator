@@ -219,3 +219,5 @@ backend/__pycache__/
 backend/service_account.json
 backend/credentials.json
 backend/token.json
+
+.claude/
