@@ -13,6 +13,7 @@ export interface Target {
   role: string;
   category: string;
   description: string;
+  sample_image: string;
 }
 
 export interface Narrative {

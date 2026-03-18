@@ -25,32 +25,44 @@ export default function TargetSelector({ targets, selectedTarget, onSelect }: Ta
       <h3 className="text-sm uppercase tracking-widest text-text-muted mb-4 font-semibold">
         {label}
       </h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
         {items.map((target, i) => (
           <button
             id={`target-${target.id}`}
             key={target.id}
             onClick={() => onSelect(target.id)}
-            className={`glass-card p-5 text-left cursor-pointer animate-slide-up ${
-              selectedTarget === target.id ? 'selected' : ''
-            }`}
+            className={`glass-card p-4 text-center cursor-pointer animate-slide-up group hover:scale-105 transition-transform duration-300 ${selectedTarget === target.id ? 'selected' : ''
+              }`}
             style={{ animationDelay: `${i * 60}ms` }}
           >
-            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${categoryColors[target.category] || ''} flex items-center justify-center text-2xl mb-3`}>
-              {categoryIcons[target.category] || '👤'}
-            </div>
-            <h4 className="text-text-primary font-semibold text-base mb-1">{target.name}</h4>
-            <p className="text-text-secondary text-sm mb-2">{target.role}</p>
-            <p className="text-text-muted text-xs leading-relaxed">{target.description}</p>
-
-            {selectedTarget === target.id && (
-              <div className="mt-3 flex items-center gap-1.5 text-brand-400 text-xs font-semibold animate-fade-in">
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
-                </svg>
-                Selected
+            <div className="relative mb-3">
+              <div className={`w-full aspect-square rounded-2xl overflow-hidden bg-gradient-to-br ${categoryColors[target.category] || ''} border-2 ${selectedTarget === target.id ? 'border-brand-400 shadow-lg shadow-brand-400/30' : 'border-surface-600 group-hover:border-brand-400/50'
+                } transition-all duration-300`}>
+                <img
+                  src={target.sample_image}
+                  alt={target.name}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    // Fallback to icon if image fails to load
+                    const icon = categoryIcons[target.category] || '👤';
+                    e.currentTarget.style.display = 'none';
+                    const parent = e.currentTarget.parentElement;
+                    if (parent) {
+                      parent.innerHTML = `<div class="w-full h-full flex items-center justify-center text-4xl">${icon}</div>`;
+                    }
+                  }}
+                />
               </div>
-            )}
+              {selectedTarget === target.id && (
+                <div className="absolute -top-2 -right-2 w-8 h-8 bg-brand-400 rounded-full flex items-center justify-center shadow-lg animate-fade-in">
+                  <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                </div>
+              )}
+            </div>
+            <h4 className="text-text-primary font-semibold text-sm mb-1">{target.name}</h4>
+            <p className="text-text-secondary text-xs">{target.role}</p>
           </button>
         ))}
       </div>

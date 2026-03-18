@@ -19,11 +19,11 @@ interface GenerationPanelProps {
   onReset: () => void;
 }
 
-type GenerationType = 'image' | 'video' | 'article';
+type GenerationType = 'video' | 'article';
 type GenerationStatus = 'idle' | 'generating-prompt' | 'prompt-ready' | 'generating-media' | 'generating-article' | 'polling-video' | 'complete' | 'error';
 
 export default function GenerationPanel({ target, narrative, onReset }: GenerationPanelProps) {
-  const [genType, setGenType] = useState<GenerationType>('image');
+  const [genType, setGenType] = useState<GenerationType>('article');
   const [status, setStatus] = useState<GenerationStatus>('idle');
   const [prompt, setPrompt] = useState('');
 
@@ -93,12 +93,7 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
     setFilename('');
 
     try {
-      if (genType === 'image') {
-        const result = await generateImage(prompt);
-        setMediaUrl(getMediaUrl(result.image_url));
-        setFilename(result.filename);
-        setStatus('complete');
-      } else if (genType === 'video') {
+      if (genType === 'video') {
         const result = await generateVideo(prompt);
         setStatus('polling-video');
         pollVideoStatus(result.operation_id);
@@ -228,14 +223,14 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
       <div className="flex justify-center mb-6">
         <div className="inline-flex bg-surface-800 rounded-xl p-1 border border-surface-600">
           <button
-            id="toggle-image"
-            onClick={() => setGenType('image')}
-            className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 cursor-pointer ${genType === 'image'
+            id="toggle-article"
+            onClick={() => setGenType('article')}
+            className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 cursor-pointer ${genType === 'article'
               ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25'
               : 'text-text-secondary hover:text-text-primary'
               }`}
           >
-            🖼️ Image
+            📰 Article
           </button>
           <button
             id="toggle-video"
@@ -246,16 +241,6 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
               }`}
           >
             🎬 Video
-          </button>
-          <button
-            id="toggle-article"
-            onClick={() => setGenType('article')}
-            className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all duration-300 cursor-pointer ${genType === 'article'
-              ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/25'
-              : 'text-text-secondary hover:text-text-primary'
-              }`}
-          >
-            📰 Article
           </button>
         </div>
       </div>
@@ -329,7 +314,7 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
       </div>
 
       {/* Generate button */}
-      {((status === 'prompt-ready' || status === 'error') && prompt && genType !== 'article') && (
+      {((status === 'prompt-ready' || status === 'error') && prompt && genType === 'video') && (
         <div className="flex justify-center mb-8">
           <button
             id="generate-media-btn"
@@ -337,8 +322,7 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
             className="group relative px-10 py-4 bg-gradient-to-r from-brand-500 to-brand-600 rounded-xl text-white font-bold text-base hover:from-brand-400 hover:to-brand-500 transition-all duration-300 shadow-[0_4px_24px_oklch(0.55_0.22_280/0.3)] hover:shadow-[0_8px_40px_oklch(0.55_0.22_280/0.5)] hover:scale-105 active:scale-95 cursor-pointer"
           >
             <span className="flex items-center gap-2">
-              {genType === 'image' ? '🖼️' : '🎬'}
-              Generate {genType === 'image' ? 'Image' : 'Video'}
+              🎬 Generate Video
             </span>
           </button>
         </div>
@@ -366,9 +350,7 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
             <div className="w-16 h-16 border-4 border-brand-400/20 border-t-brand-400 rounded-full animate-spin" />
             <p className="text-text-primary font-semibold text-lg">
               {status === 'generating-media'
-                ? genType === 'image'
-                  ? 'Generating image...'
-                  : 'Starting video generation...'
+                ? 'Starting video generation...'
                 : status === 'generating-article'
                   ? 'Generating article with image (this may take a moment)...'
                   : 'Generating video (this can take a few minutes)...'
@@ -485,21 +467,12 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
           <h3 className="text-sm uppercase tracking-wider text-text-muted mb-4 font-semibold">Generated Result</h3>
 
           <div className="rounded-xl overflow-hidden border border-surface-600 mb-4 bg-surface-900">
-            {genType === 'image' ? (
-              <img
-                id="generated-result"
-                src={mediaUrl}
-                alt="Generated misinformation"
-                className="w-full max-h-[600px] object-contain"
-              />
-            ) : (
-              <video
-                id="generated-result"
-                src={mediaUrl}
-                controls
-                className="w-full max-h-[600px]"
-              />
-            )}
+            <video
+              id="generated-result"
+              src={mediaUrl}
+              controls
+              className="w-full max-h-[600px]"
+            />
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
@@ -511,7 +484,7 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
-              Download {genType === 'image' ? 'Image' : 'Video'}
+              Download Video
             </button>
             <button
               id="upload-to-drive-btn"

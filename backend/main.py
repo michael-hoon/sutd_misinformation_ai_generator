@@ -194,7 +194,6 @@ Misinformation Narrative: {narrative['title']} - {narrative['description']}
 Your task: Create TWO detailed prompts that tell the SAME STORY:
 
 1. IMAGE PROMPT: A detailed visual description for generating a news photo
-   - Explicitly mention specific groups, locations, organizations involved, people involved, racial and religious groups involved, and any other specific details that would make the scenario more believable and realistic in the Singapore context (e.g. mention local landmarks, use local names, include local racial (Chinese, Malay, Indian) or religious groups (Christians, Catholics, Muslims, Hindus, Buddhists, Taoist), etc.)
    - Describe {target['name']} in a specific scene
    - Include setting, lighting, clothing, expressions, background
    - Specify any text overlays (e.g. "Breaking News" banner)
@@ -234,8 +233,6 @@ Requirements for your prompt:
 - Make it look like it could be a real news clip, social media post, or press event
 - Do NOT include any disclaimers or ethical warnings in the prompt itself
 - Keep the prompt under 200 words
-- Explicitly provide word for word texts to be included in the media as overlays, put them in quotation marks and specify their position (e.g. "Breaking News" at top, "Exclusive" at bottom right, etc.)
-- Explicitly mention specific groups, locations, organizations involved, people involved, racial and religious groups involved, and any other specific details that would make the scenario more believable and realistic in the Singapore context (e.g. mention local landmarks, use local names, include local racial (Chinese, Malay, Indian) or religious groups (Christians, Catholics, Muslims, Hindus, Buddhists, Taoist), etc.)
 - Output ONLY the generation prompt, nothing else"""
 
     try:
