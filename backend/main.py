@@ -65,6 +65,10 @@ ARTICLES_DIR = GENERATED_DIR / "articles"
 ARTICLES_DIR.mkdir(exist_ok=True)
 app.mount("/articles", StaticFiles(directory=str(ARTICLES_DIR), html=True), name="articles")
 
+# --- Generated article images directory ---
+ARTICLE_IMAGES_DIR = ARTICLES_DIR / "images"
+ARTICLE_IMAGES_DIR.mkdir(exist_ok=True)
+
 # --- Google AI Client ---
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
@@ -434,7 +438,7 @@ async def generate_article(request: GenerateArticleRequest):
         for part in image_response.candidates[0].content.parts:
             if part.inline_data is not None:
                 image_filename = f"article_{uuid.uuid4().hex[:8]}.png"
-                image_path = GENERATED_DIR / image_filename
+                image_path = ARTICLE_IMAGES_DIR / image_filename
                 
                 image_bytes = part.inline_data.data
                 if isinstance(image_bytes, str):
@@ -526,7 +530,7 @@ Output ONLY valid JSON with no markdown formatting:
             author=article_data["author"],
             publication=article_data["publication"],
             date=current_date,
-            image_url=f"/generated/{image_filename}",
+            image_url=f"/articles/images/{image_filename}",
             body=article_data["body"],
             year=datetime.now().year
         )
@@ -552,7 +556,7 @@ Output ONLY valid JSON with no markdown formatting:
             article_id=article_id,
             article_url=f"/articles/{html_filename}",
             headline=article_data["headline"],
-            image_url=f"/generated/{image_filename}",
+            image_url=f"/articles/images/{image_filename}",
             published_url=None,
         )
     
