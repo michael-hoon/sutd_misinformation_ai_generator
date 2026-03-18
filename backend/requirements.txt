@@ -8,5 +8,5 @@ google-auth-httplib2==0.2.0
 google-auth-oauthlib==1.2.1
 # xai-sdk  # GROK: Uncomment to use Grok (currently using Gemini)
 jinja2==3.1.3
-httpx==0.27.0
+httpx>=0.28.1,<1.0.0
 blake3==1.0.4
