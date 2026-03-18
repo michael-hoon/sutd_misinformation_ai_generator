@@ -22,6 +22,11 @@ PROMPT_MODEL = "gemini-3.1-flash-lite-preview"          # Gemini for prompt orch
 IMAGE_MODEL = "gemini-3.1-flash-image-preview"          # For image generation
 VIDEO_MODEL = "veo-3.1-fast-generate-preview"           # For video generation (fast)
 
+# --- Cloudflare Pages ---
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
+CLOUDFLARE_PROJECT_NAME = os.getenv("CLOUDFLARE_PROJECT_NAME", "")
+
 # --- Google Drive Upload (OAuth 2.0) ---
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
 OAUTH_CREDENTIALS_FILE = os.getenv(
