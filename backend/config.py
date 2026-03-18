@@ -24,6 +24,10 @@ VIDEO_MODEL = "veo-3.1-fast-generate-preview"           # For video generation (
 
 # --- Sample Images Directory (for reference images) ---
 SAMPLE_IMAGES_DIR = Path(__file__).parent / "sample_images"
+# --- Cloudflare Pages ---
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
+CLOUDFLARE_PROJECT_NAME = os.getenv("CLOUDFLARE_PROJECT_NAME", "")
 
 # --- Google Drive Upload (OAuth 2.0) ---
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")

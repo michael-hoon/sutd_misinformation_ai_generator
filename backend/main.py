@@ -11,6 +11,7 @@ Provides endpoints for:
 import base64
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime
@@ -27,10 +28,15 @@ from google.genai import types
 # from xai_sdk import Client
 # from xai_sdk.chat import user, system
 from jinja2 import Template
+import blake3
+import httpx
 
 from config import (
     GOOGLE_API_KEY,
     # XAI_API_KEY,  # GROK: Uncomment to use Grok
+    CLOUDFLARE_ACCOUNT_ID,
+    CLOUDFLARE_API_TOKEN,
+    CLOUDFLARE_PROJECT_NAME,
     GOOGLE_DRIVE_FOLDER_ID,
     PROMPT_MODEL,
     IMAGE_MODEL,
@@ -65,6 +71,10 @@ ARTICLES_DIR = GENERATED_DIR / "articles"
 ARTICLES_DIR.mkdir(exist_ok=True)
 app.mount("/articles", StaticFiles(directory=str(ARTICLES_DIR), html=True), name="articles")
 
+# --- Generated article images directory ---
+ARTICLE_IMAGES_DIR = ARTICLES_DIR / "images"
+ARTICLE_IMAGES_DIR.mkdir(exist_ok=True)
+
 # --- Google AI Client ---
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
@@ -80,6 +90,134 @@ video_operations: dict = {}
 
 # --- In-memory store for articles ---
 articles_store: dict = {}
+
+
+def update_articles_index() -> None:
+    """Rebuild index.html in ARTICLES_DIR listing all generated articles."""
+    article_files = sorted(
+        [f for f in ARTICLES_DIR.glob("*.html") if f.name != "index.html"],
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+
+    entries = []
+    for path in article_files:
+        try:
+            html = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        headline = (re.search(r"<title>(.*?)</title>", html) or re.search(r'class="headline"[^>]*>(.*?)</h1>', html, re.DOTALL))
+        publication = re.search(r'class="publication"[^>]*>(.*?)</div>', html, re.DOTALL)
+        author = re.search(r'class="author"[^>]*>By\s*(.*?)</span>', html)
+        date = re.search(r'class="date"[^>]*>(.*?)</span>', html)
+        entries.append({
+            "filename": path.name,
+            "headline": headline.group(1).strip() if headline else path.stem,
+            "publication": publication.group(1).strip() if publication else "",
+            "author": author.group(1).strip() if author else "",
+            "date": date.group(1).strip() if date else "",
+        })
+
+    rows = ""
+    for e in entries:
+        rows += f"""
+        <tr>
+            <td><a href="{e['filename']}">{e['headline']}</a></td>
+            <td>{e['publication']}</td>
+            <td>{e['author']}</td>
+            <td>{e['date']}</td>
+        </tr>"""
+
+    index_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Generated Articles — Research Index</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #1a1a1a; }}
+        .banner {{ background: #b91c1c; color: white; padding: 18px 32px; }}
+        .banner h1 {{ font-size: 1.1em; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }}
+        .container {{ max-width: 1000px; margin: 32px auto; padding: 0 24px; }}
+        .disclaimer-box {{
+            background: #fff8e1;
+            border: 2px solid #f59e0b;
+            border-left: 6px solid #b91c1c;
+            border-radius: 6px;
+            padding: 24px 28px;
+            margin-bottom: 36px;
+        }}
+        .disclaimer-box h2 {{ color: #b91c1c; font-size: 1.15em; margin-bottom: 12px; }}
+        .disclaimer-box p {{ color: #444; line-height: 1.7; margin-bottom: 10px; font-size: 0.95em; }}
+        .disclaimer-box p:last-child {{ margin-bottom: 0; }}
+        .disclaimer-box strong {{ color: #b91c1c; }}
+        h2.section-title {{ font-size: 1em; text-transform: uppercase; letter-spacing: 0.08em; color: #555; margin-bottom: 16px; }}
+        table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }}
+        thead {{ background: #1a1a1a; color: white; }}
+        th {{ padding: 12px 16px; text-align: left; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.06em; }}
+        td {{ padding: 12px 16px; border-bottom: 1px solid #e5e7eb; font-size: 0.92em; vertical-align: top; }}
+        tr:last-child td {{ border-bottom: none; }}
+        tr:hover td {{ background: #f9fafb; }}
+        td a {{ color: #1d4ed8; text-decoration: none; font-weight: 500; }}
+        td a:hover {{ text-decoration: underline; }}
+        .empty {{ padding: 32px; text-align: center; color: #888; font-size: 0.95em; }}
+        .count {{ color: #6b7280; font-size: 0.85em; margin-bottom: 10px; }}
+    </style>
+</head>
+<body>
+    <div class="banner">
+        <h1>SUTD Capstone Research — AI-Generated Article Corpus</h1>
+    </div>
+    <div class="container">
+        <div class="disclaimer-box">
+            <h2>&#9888; Research Disclaimer — Read Before Proceeding</h2>
+            <p>
+                This page is part of a <strong>SUTD Capstone research project</strong> investigating the robustness
+                of AI-generated misinformation detection systems. All articles listed below are
+                <strong>entirely fabricated by a large language model (LLM)</strong> and were generated
+                for the sole purpose of evaluating automated classifiers.
+            </p>
+            <p>
+                <strong>The articles are fake.</strong> Every headline, author name, publication name,
+                quote, statistic, and event described within them is fictional and was synthetically
+                produced. None of the content reflects real events, real statements by real people,
+                or factual information of any kind.
+            </p>
+            <p>
+                The individual article pages intentionally omit AI-generation notices so that the
+                classifier under evaluation does not encounter any superficial textual cues that
+                would introduce bias into the experiment. The disclaimer you are reading <em>now</em>
+                is the authoritative source of context for this corpus.
+            </p>
+            <p>
+                <strong>Do not share, republish, or present any of these articles as real.</strong>
+                Misuse of synthetically generated misinformation content, even for unintentional
+                distribution, can cause real-world harm.
+            </p>
+        </div>
+
+        <h2 class="section-title">Generated Articles</h2>
+        <p class="count">{len(entries)} article{"s" if len(entries) != 1 else ""} in corpus &mdash; newest first</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Headline</th>
+                    <th>Publication</th>
+                    <th>Author</th>
+                    <th>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {"<tr><td colspan='4' class='empty'>No articles generated yet.</td></tr>" if not entries else rows}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
+"""
+    index_path = ARTICLES_DIR / "index.html"
+    index_path.write_text(index_html, encoding="utf-8")
 
 
 # =========================================================================
@@ -431,7 +569,7 @@ async def generate_article(request: GenerateArticleRequest):
         for part in image_response.candidates[0].content.parts:
             if part.inline_data is not None:
                 image_filename = f"article_{uuid.uuid4().hex[:8]}.png"
-                image_path = GENERATED_DIR / image_filename
+                image_path = ARTICLE_IMAGES_DIR / image_filename
                 
                 image_bytes = part.inline_data.data
                 if isinstance(image_bytes, str):
@@ -523,7 +661,7 @@ Output ONLY valid JSON with no markdown formatting:
             author=article_data["author"],
             publication=article_data["publication"],
             date=current_date,
-            image_url=f"/generated/{image_filename}",
+            image_url=f"images/{image_filename}",
             body=article_data["body"],
             year=datetime.now().year
         )
@@ -534,6 +672,9 @@ Output ONLY valid JSON with no markdown formatting:
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
         
+        # Rebuild the article index
+        update_articles_index()
+
         # Store article metadata
         articles_store[article_id] = {
             "headline": article_data["headline"],
@@ -549,7 +690,7 @@ Output ONLY valid JSON with no markdown formatting:
             article_id=article_id,
             article_url=f"/articles/{html_filename}",
             headline=article_data["headline"],
-            image_url=f"/generated/{image_filename}",
+            image_url=f"/articles/images/{image_filename}",
             published_url=None,
         )
     
@@ -570,29 +711,165 @@ Output ONLY valid JSON with no markdown formatting:
 @app.post("/api/publish-article/{article_id}")
 async def publish_article(article_id: str):
     """
-    Publish article to your hosted domain.
-    For now, returns the local article URL.
-    TODO: Implement actual publishing to GitHub Pages, Cloudflare, or other hosting.
+    Deploy the entire backend/generated/articles/ directory to Cloudflare Pages
+    via the Direct Upload API and return the live article URL.
     """
     if article_id not in articles_store:
         raise HTTPException(status_code=404, detail="Article not found")
-    
+
+    if not all([CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_PROJECT_NAME]):
+        raise HTTPException(
+            status_code=500,
+            detail="Cloudflare credentials not configured. Set CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, and CLOUDFLARE_PROJECT_NAME in .env"
+        )
+
     article = articles_store[article_id]
-    
-    # For now, just return the local URL
-    # In production, implement actual publishing here:
-    # - Upload to GitHub Pages
-    # - Upload to Cloudflare R2
-    # - Deploy to Vercel/Netlify
-    
-    published_url = f"http://localhost:8000/articles/{article_id}.html"
+
+    # Collect files and compute hashes using the same algorithm Wrangler uses:
+    # BLAKE3( base64(file_bytes) + extension_without_dot )[:32]
+    manifest: dict[str, str] = {}
+    file_contents: dict[str, tuple[bytes, str]] = {}  # hash -> (bytes, content-type)
+
+    MIME_TYPES = {
+        ".html": "text/html",
+        ".css": "text/css",
+        ".js": "application/javascript",
+        ".json": "application/json",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+        ".webp": "image/webp",
+        ".ico": "image/x-icon",
+        ".woff": "font/woff",
+        ".woff2": "font/woff2",
+        ".ttf": "font/ttf",
+    }
+
+    def cf_hash(content: bytes, suffix: str) -> str:
+        ext = suffix.lstrip(".").lower()
+        data = base64.b64encode(content).decode() + ext
+        return blake3.blake3(data.encode()).hexdigest()[:32]
+
+    for file_path in ARTICLES_DIR.rglob("*"):
+        if file_path.is_file():
+            content = file_path.read_bytes()
+            file_hash = cf_hash(content, file_path.suffix)
+            arcname = "/" + file_path.relative_to(ARTICLES_DIR).as_posix()
+            manifest[arcname] = file_hash
+            mime = MIME_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
+            file_contents[file_hash] = (content, mime)
+
+    cf_base = f"https://api.cloudflare.com/client/v4"
+    cf_headers = {"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # Step 1: Get an upload JWT
+            token_resp = await client.get(
+                f"{cf_base}/accounts/{CLOUDFLARE_ACCOUNT_ID}"
+                f"/pages/projects/{CLOUDFLARE_PROJECT_NAME}/upload-token",
+                headers=cf_headers,
+            )
+            if token_resp.status_code != 200 or not token_resp.json().get("success"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to get upload token: {token_resp.text[:500]}"
+                )
+            upload_jwt = token_resp.json()["result"]["jwt"]
+            jwt_headers = {"Authorization": f"Bearer {upload_jwt}"}
+
+            # Step 2a: Check which hashes Cloudflare already has
+            check_resp = await client.post(
+                f"{cf_base}/pages/assets/check-missing",
+                headers=jwt_headers,
+                json={"hashes": list(file_contents.keys())},
+            )
+            if check_resp.status_code != 200 or not check_resp.json().get("success"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to check missing assets: {check_resp.text[:500]}"
+                )
+            missing_hashes: list[str] = check_resp.json().get("result", [])
+
+            # Step 2b: Upload only the missing files
+            if missing_hashes:
+                upload_payload = [
+                    {
+                        "key": h,
+                        "value": base64.b64encode(file_contents[h][0]).decode(),
+                        "metadata": {"contentType": file_contents[h][1]},
+                        "base64": True,
+                    }
+                    for h in missing_hashes
+                    if h in file_contents
+                ]
+                upload_resp = await client.post(
+                    f"{cf_base}/pages/assets/upload",
+                    headers=jwt_headers,
+                    json=upload_payload,
+                )
+                if upload_resp.status_code != 200 or not upload_resp.json().get("success"):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Failed to upload assets: {upload_resp.text[:500]}"
+                    )
+
+            # Step 2c: Upsert all hashes
+            upsert_resp = await client.post(
+                f"{cf_base}/pages/assets/upsert-hashes",
+                headers=jwt_headers,
+                json={"hashes": list(file_contents.keys())},
+            )
+            if upsert_resp.status_code != 200 or not upsert_resp.json().get("success"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to upsert hashes: {upsert_resp.text[:500]}"
+                )
+
+            # Step 3: Create the deployment — multipart/form-data required by Cloudflare.
+            # Using files= with (None, value) tuples is the httpx pattern for sending
+            # multipart text fields. branch, commit_hash, commit_message are all required.
+            response = await client.post(
+                f"{cf_base}/accounts/{CLOUDFLARE_ACCOUNT_ID}"
+                f"/pages/projects/{CLOUDFLARE_PROJECT_NAME}/deployments",
+                headers=cf_headers,
+                files={
+                    "branch":         (None, "main"),
+                    "commit_message": (None, f"Publish article {article_id}"),
+                    "commit_hash":    (None, article_id.replace("-", "")[:40].ljust(40, "0")),
+                    "manifest":       (None, json.dumps(manifest)),
+                },
+            )
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Cloudflare API timed out.")
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Network error: {str(exc)}")
+
+    if response.status_code not in (200, 201):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cloudflare error {response.status_code}: {response.text[:500]}"
+        )
+
+    cf_data = response.json()
+    if not cf_data.get("success"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cloudflare deployment failed: {cf_data.get('errors', [])}"
+        )
+
+    published_url = f"https://{CLOUDFLARE_PROJECT_NAME}.pages.dev/{article_id}.html"
     articles_store[article_id]["published_url"] = published_url
-    
+
     return {
         "article_id": article_id,
         "published_url": published_url,
         "headline": article["headline"],
-        "message": "Article is available locally. Configure hosting for public publishing."
+        "message": "Deployed to Cloudflare Pages. Allow ~30 seconds for propagation.",
     }
 
 
