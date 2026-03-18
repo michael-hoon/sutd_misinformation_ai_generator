@@ -11,6 +11,7 @@ Provides endpoints for:
 import base64
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime
@@ -84,6 +85,134 @@ video_operations: dict = {}
 
 # --- In-memory store for articles ---
 articles_store: dict = {}
+
+
+def update_articles_index() -> None:
+    """Rebuild index.html in ARTICLES_DIR listing all generated articles."""
+    article_files = sorted(
+        [f for f in ARTICLES_DIR.glob("*.html") if f.name != "index.html"],
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+
+    entries = []
+    for path in article_files:
+        try:
+            html = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        headline = (re.search(r"<title>(.*?)</title>", html) or re.search(r'class="headline"[^>]*>(.*?)</h1>', html, re.DOTALL))
+        publication = re.search(r'class="publication"[^>]*>(.*?)</div>', html, re.DOTALL)
+        author = re.search(r'class="author"[^>]*>By\s*(.*?)</span>', html)
+        date = re.search(r'class="date"[^>]*>(.*?)</span>', html)
+        entries.append({
+            "filename": path.name,
+            "headline": headline.group(1).strip() if headline else path.stem,
+            "publication": publication.group(1).strip() if publication else "",
+            "author": author.group(1).strip() if author else "",
+            "date": date.group(1).strip() if date else "",
+        })
+
+    rows = ""
+    for e in entries:
+        rows += f"""
+        <tr>
+            <td><a href="{e['filename']}">{e['headline']}</a></td>
+            <td>{e['publication']}</td>
+            <td>{e['author']}</td>
+            <td>{e['date']}</td>
+        </tr>"""
+
+    index_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Generated Articles — Research Index</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #1a1a1a; }}
+        .banner {{ background: #b91c1c; color: white; padding: 18px 32px; }}
+        .banner h1 {{ font-size: 1.1em; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }}
+        .container {{ max-width: 1000px; margin: 32px auto; padding: 0 24px; }}
+        .disclaimer-box {{
+            background: #fff8e1;
+            border: 2px solid #f59e0b;
+            border-left: 6px solid #b91c1c;
+            border-radius: 6px;
+            padding: 24px 28px;
+            margin-bottom: 36px;
+        }}
+        .disclaimer-box h2 {{ color: #b91c1c; font-size: 1.15em; margin-bottom: 12px; }}
+        .disclaimer-box p {{ color: #444; line-height: 1.7; margin-bottom: 10px; font-size: 0.95em; }}
+        .disclaimer-box p:last-child {{ margin-bottom: 0; }}
+        .disclaimer-box strong {{ color: #b91c1c; }}
+        h2.section-title {{ font-size: 1em; text-transform: uppercase; letter-spacing: 0.08em; color: #555; margin-bottom: 16px; }}
+        table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }}
+        thead {{ background: #1a1a1a; color: white; }}
+        th {{ padding: 12px 16px; text-align: left; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.06em; }}
+        td {{ padding: 12px 16px; border-bottom: 1px solid #e5e7eb; font-size: 0.92em; vertical-align: top; }}
+        tr:last-child td {{ border-bottom: none; }}
+        tr:hover td {{ background: #f9fafb; }}
+        td a {{ color: #1d4ed8; text-decoration: none; font-weight: 500; }}
+        td a:hover {{ text-decoration: underline; }}
+        .empty {{ padding: 32px; text-align: center; color: #888; font-size: 0.95em; }}
+        .count {{ color: #6b7280; font-size: 0.85em; margin-bottom: 10px; }}
+    </style>
+</head>
+<body>
+    <div class="banner">
+        <h1>SUTD Capstone Research — AI-Generated Article Corpus</h1>
+    </div>
+    <div class="container">
+        <div class="disclaimer-box">
+            <h2>&#9888; Research Disclaimer — Read Before Proceeding</h2>
+            <p>
+                This page is part of a <strong>SUTD Capstone research project</strong> investigating the robustness
+                of AI-generated misinformation detection systems. All articles listed below are
+                <strong>entirely fabricated by a large language model (LLM)</strong> and were generated
+                for the sole purpose of evaluating automated classifiers.
+            </p>
+            <p>
+                <strong>The articles are fake.</strong> Every headline, author name, publication name,
+                quote, statistic, and event described within them is fictional and was synthetically
+                produced. None of the content reflects real events, real statements by real people,
+                or factual information of any kind.
+            </p>
+            <p>
+                The individual article pages intentionally omit AI-generation notices so that the
+                classifier under evaluation does not encounter any superficial textual cues that
+                would introduce bias into the experiment. The disclaimer you are reading <em>now</em>
+                is the authoritative source of context for this corpus.
+            </p>
+            <p>
+                <strong>Do not share, republish, or present any of these articles as real.</strong>
+                Misuse of synthetically generated misinformation content, even for unintentional
+                distribution, can cause real-world harm.
+            </p>
+        </div>
+
+        <h2 class="section-title">Generated Articles</h2>
+        <p class="count">{len(entries)} article{"s" if len(entries) != 1 else ""} in corpus &mdash; newest first</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Headline</th>
+                    <th>Publication</th>
+                    <th>Author</th>
+                    <th>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {"<tr><td colspan='4' class='empty'>No articles generated yet.</td></tr>" if not entries else rows}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
+"""
+    index_path = ARTICLES_DIR / "index.html"
+    index_path.write_text(index_html, encoding="utf-8")
 
 
 # =========================================================================
@@ -541,6 +670,9 @@ Output ONLY valid JSON with no markdown formatting:
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
         
+        # Rebuild the article index
+        update_articles_index()
+
         # Store article metadata
         articles_store[article_id] = {
             "headline": article_data["headline"],
