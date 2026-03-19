@@ -3,6 +3,7 @@ import type { Target, Narrative, DriveUploadResponse, ArticleResponse, PublishRe
 import {
   generatePrompt,
   generateImage,
+  generateNarration,
   generateVideo,
   generateArticle,
   publishArticle,
@@ -44,9 +45,25 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<PublishResponse | null>(null);
 
+  // Video 3-step workflow state
+  const [videoStep, setVideoStep] = useState<1 | 2 | 3>(1);
+  const [step1ImagePrompt, setStep1ImagePrompt] = useState(''); // Step 1: Image prompt
+  const [step2Image, setStep2Image] = useState<{ url: string; filename: string } | null>(null); // Step 2: Generated image
+  const [step3NarrationPrompt, setStep3NarrationPrompt] = useState(''); // Step 3: Narration prompt
+  const [generatingStep, setGeneratingStep] = useState<1 | 2 | 3 | null>(null); // Which step is currently generating
+
   // Auto-generate prompt on mount and when genType changes
   useEffect(() => {
     const abortController = new AbortController();
+
+    // Reset video steps when switching tabs
+    if (genType === 'video') {
+      setVideoStep(1);
+      setStep1ImagePrompt('');
+      setStep2Image(null);
+      setStep3NarrationPrompt('');
+      setGeneratingStep(null);
+    }
 
     // Debounce: wait 100ms before firing to prevent rapid tab switching issues
     const timeoutId = setTimeout(() => {
@@ -71,6 +88,9 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
       if (genType === 'article' && result.image_prompt && result.article_prompt) {
         setImagePrompt(result.image_prompt);
         setArticlePrompt(result.article_prompt);
+      } else if (genType === 'video') {
+        // For video, store in step1ImagePrompt
+        setStep1ImagePrompt(result.prompt);
       } else {
         setPrompt(result.prompt);
       }
@@ -87,26 +107,95 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
   };
 
   const handleGenerate = async () => {
-    setStatus('generating-media');
+    // Only for article generation now (video has its own handleGenerateVideoFromImage)
+    if (genType !== 'article') return;
+
+    setStatus('generating-article');
     setError('');
     setMediaUrl('');
     setFilename('');
 
     try {
-      if (genType === 'video') {
-        const result = await generateVideo(prompt);
-        setStatus('polling-video');
-        pollVideoStatus(result.operation_id);
-      } else if (genType === 'article') {
-        setStatus('generating-article');
-        const result = await generateArticle(target.id, narrative.id, imagePrompt, articlePrompt);
-        setArticleData(result);
-        setStatus('complete');
-      }
+      const result = await generateArticle(target.id, narrative.id, imagePrompt, articlePrompt);
+      setArticleData(result);
+      setStatus('complete');
     } catch (err: any) {
-      setError(err.response?.data?.detail || `Failed to generate ${genType}`);
+      setError(err.response?.data?.detail || 'Failed to generate article');
       setStatus('error');
     }
+  };
+
+  // Video Step 2: Generate image from prompt
+  const handleGenerateVideoImage = async () => {
+    if (!step1ImagePrompt.trim()) return;
+
+    setGeneratingStep(2);
+    setError('');
+    try {
+      const result = await generateImage(step1ImagePrompt);
+      setStep2Image({
+        url: getMediaUrl(result.image_url),
+        filename: result.filename,
+      });
+      setVideoStep(2);
+      setGeneratingStep(null);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to generate image');
+      setGeneratingStep(null);
+    }
+  };
+
+  // Video Step 3: Generate narration prompt
+  const handleGenerateNarration = async () => {
+    setGeneratingStep(3);
+    setError('');
+    try {
+      const result = await generateNarration(step1ImagePrompt, target.id, narrative.id);
+      setStep3NarrationPrompt(result.narration_prompt);
+      setGeneratingStep(null);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to generate narration prompt');
+      setGeneratingStep(null);
+    }
+  };
+
+  // Video Step 3: Generate video
+  const handleGenerateVideoFromImage = async () => {
+    if (!step2Image || !step3NarrationPrompt.trim()) return;
+
+    setStatus('generating-media');
+    setError('');
+    try {
+      const result = await generateVideo(step2Image.filename, step3NarrationPrompt);
+      setStatus('polling-video');
+      pollVideoStatus(result.operation_id);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to start video generation');
+      setStatus('error');
+    }
+  };
+
+  // Regenerate handlers (clear subsequent steps)
+  const handleRegenerateStep1 = () => {
+    setStep2Image(null);
+    setStep3NarrationPrompt('');
+    setMediaUrl('');
+    setFilename('');
+    setVideoStep(1);
+    setStatus('prompt-ready');
+  };
+
+  const handleRegenerateStep2 = () => {
+    setStep2Image(null);
+    setStep3NarrationPrompt('');
+    setMediaUrl('');
+    setFilename('');
+    setVideoStep(2);
+    setGeneratingStep(null);
+  };
+
+  const handleRegenerateStep3Narration = () => {
+    setStep3NarrationPrompt('');
   };
 
   const pollVideoStatus = useCallback(async (operationId: string) => {
@@ -296,6 +385,99 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
               />
             </div>
           </div>
+        ) : genType === 'video' ? (
+          // Video 3-step workflow
+          <div className="space-y-6">
+            {/* Step 1: Image Prompt */}
+            <div>
+              <label className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2 block">
+                Step 1: Image Prompt
+              </label>
+              <textarea
+                id="video-image-prompt-editor"
+                value={step1ImagePrompt}
+                onChange={(e) => setStep1ImagePrompt(e.target.value)}
+                rows={5}
+                className="w-full bg-surface-900/50 text-text-primary border border-surface-600 rounded-xl px-4 py-3 text-sm leading-relaxed focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400/20 resize-y transition-colors"
+                placeholder="AI will generate a prompt for the video image..."
+              />
+              <div className="flex items-center gap-3 mt-3">
+                <button
+                  onClick={handleGenerateVideoImage}
+                  disabled={!step1ImagePrompt.trim() || generatingStep === 2}
+                  className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all cursor-pointer ${!step1ImagePrompt.trim() || generatingStep === 2
+                      ? 'bg-surface-700 text-text-muted cursor-not-allowed'
+                      : 'bg-gradient-to-r from-brand-500 to-brand-600 text-white hover:from-brand-400 hover:to-brand-500 shadow-lg hover:shadow-brand-500/25'
+                    }`}
+                >
+                  {generatingStep === 2 ? (
+                    <>
+                      <div className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+                      Generating Image...
+                    </>
+                  ) : (
+                    '🖼️ Generate Image'
+                  )}
+                </button>
+                {step2Image && (
+                  <button
+                    onClick={handleRegenerateStep2}
+                    className="text-xs text-brand-400 hover:text-brand-300 transition-colors cursor-pointer font-medium"
+                  >
+                    ↻ Regenerate Image
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Step 2: Display Generated Image */}
+            {step2Image && (
+              <div>
+                <label className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2 block">
+                  Step 2: Generated Image
+                </label>
+                <div className="rounded-xl overflow-hidden border border-surface-600 bg-surface-900 mb-4">
+                  <img
+                    src={step2Image.url}
+                    alt="Generated for video"
+                    className="w-full max-h-[400px] object-contain"
+                  />
+                </div>
+
+                {/* Step 3: Narration Input */}
+                <label className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2 block">
+                  Step 3: What should the person say? (Narration/Speech)
+                </label>
+                <textarea
+                  id="video-narration-input"
+                  value={step3NarrationPrompt}
+                  onChange={(e) => setStep3NarrationPrompt(e.target.value)}
+                  rows={4}
+                  className="w-full bg-surface-900/50 text-text-primary border border-surface-600 rounded-xl px-4 py-3 text-sm leading-relaxed focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400/20 resize-y transition-colors"
+                  placeholder="Type what the person in the image should say or describe the narration..."
+                />
+                <div className="flex items-center gap-3 mt-3">
+                  <button
+                    onClick={handleGenerateVideoFromImage}
+                    disabled={!step3NarrationPrompt.trim() || status === 'generating-media' || status === 'polling-video'}
+                    className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all cursor-pointer ${!step3NarrationPrompt.trim() || status === 'generating-media' || status === 'polling-video'
+                        ? 'bg-surface-700 text-text-muted cursor-not-allowed'
+                        : 'bg-gradient-to-r from-accent-500 to-accent-600 text-white hover:from-accent-400 hover:to-accent-500 shadow-lg hover:shadow-accent-500/25'
+                      }`}
+                  >
+                    {status === 'generating-media' || status === 'polling-video' ? (
+                      <>
+                        <div className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+                        Generating Video...
+                      </>
+                    ) : (
+                      '🎬 Generate Video'
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         ) : (
           <textarea
             id="prompt-editor"
@@ -313,21 +495,7 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
         )}
       </div>
 
-      {/* Generate button */}
-      {((status === 'prompt-ready' || status === 'error') && prompt && genType === 'video') && (
-        <div className="flex justify-center mb-8">
-          <button
-            id="generate-media-btn"
-            onClick={handleGenerate}
-            className="group relative px-10 py-4 bg-gradient-to-r from-brand-500 to-brand-600 rounded-xl text-white font-bold text-base hover:from-brand-400 hover:to-brand-500 transition-all duration-300 shadow-[0_4px_24px_oklch(0.55_0.22_280/0.3)] hover:shadow-[0_8px_40px_oklch(0.55_0.22_280/0.5)] hover:scale-105 active:scale-95 cursor-pointer"
-          >
-            <span className="flex items-center gap-2">
-              🎬 Generate Video
-            </span>
-          </button>
-        </div>
-      )}
-
+      {/* Remove old video generate button - now integrated into step workflow */}
       {/* Generate Article button - shown immediately for article type */}
       {genType === 'article' && (status === 'prompt-ready' || status === 'error') && imagePrompt && articlePrompt && (
         <div className="flex justify-center mb-8">

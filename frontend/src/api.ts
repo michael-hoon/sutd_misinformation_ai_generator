@@ -81,8 +81,24 @@ export async function generateImage(prompt: string): Promise<ImageResponse> {
   return res.data;
 }
 
-export async function generateVideo(prompt: string): Promise<VideoResponse> {
-  const res = await api.post('/api/generate-video', { prompt });
+export async function generateNarration(
+  imagePrompt: string,
+  targetId: string,
+  narrativeId: string
+): Promise<{ narration_prompt: string }> {
+  const res = await api.post('/api/generate-narration', {
+    image_prompt: imagePrompt,
+    target_id: targetId,
+    narrative_id: narrativeId,
+  });
+  return res.data;
+}
+
+export async function generateVideo(imageFilename: string, narrationPrompt: string): Promise<VideoResponse> {
+  const res = await api.post('/api/generate-video', {
+    image_filename: imageFilename,
+    narration_prompt: narrationPrompt,
+  });
   return res.data;
 }
 

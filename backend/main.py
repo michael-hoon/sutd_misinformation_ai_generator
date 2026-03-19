@@ -11,7 +11,6 @@ Provides endpoints for:
 import base64
 import json
 import os
-import re
 import time
 import uuid
 from datetime import datetime
@@ -24,19 +23,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
+import fal_client
 # GROK: Uncomment below to use Grok instead of Gemini for prompts
 # from xai_sdk import Client
 # from xai_sdk.chat import user, system
 from jinja2 import Template
-import blake3
-import httpx
 
 from config import (
     GOOGLE_API_KEY,
+    FAL_KEY,
     # XAI_API_KEY,  # GROK: Uncomment to use Grok
-    CLOUDFLARE_ACCOUNT_ID,
-    CLOUDFLARE_API_TOKEN,
-    CLOUDFLARE_PROJECT_NAME,
     GOOGLE_DRIVE_FOLDER_ID,
     PROMPT_MODEL,
     IMAGE_MODEL,
@@ -71,12 +67,13 @@ ARTICLES_DIR = GENERATED_DIR / "articles"
 ARTICLES_DIR.mkdir(exist_ok=True)
 app.mount("/articles", StaticFiles(directory=str(ARTICLES_DIR), html=True), name="articles")
 
-# --- Generated article images directory ---
-ARTICLE_IMAGES_DIR = ARTICLES_DIR / "images"
-ARTICLE_IMAGES_DIR.mkdir(exist_ok=True)
-
 # --- Google AI Client ---
 client = genai.Client(api_key=GOOGLE_API_KEY)
+
+# --- FAL Client for Image-to-Video ---
+if FAL_KEY:
+    import os as fal_os
+    fal_os.environ["FAL_KEY"] = FAL_KEY
 
 # --- xAI Grok Client (COMMENTED OUT - using Gemini for now) ---
 # GROK: Uncomment below to use Grok for prompt generation
@@ -90,134 +87,6 @@ video_operations: dict = {}
 
 # --- In-memory store for articles ---
 articles_store: dict = {}
-
-
-def update_articles_index() -> None:
-    """Rebuild index.html in ARTICLES_DIR listing all generated articles."""
-    article_files = sorted(
-        [f for f in ARTICLES_DIR.glob("*.html") if f.name != "index.html"],
-        key=lambda f: f.stat().st_mtime,
-        reverse=True,
-    )
-
-    entries = []
-    for path in article_files:
-        try:
-            html = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        headline = (re.search(r"<title>(.*?)</title>", html) or re.search(r'class="headline"[^>]*>(.*?)</h1>', html, re.DOTALL))
-        publication = re.search(r'class="publication"[^>]*>(.*?)</div>', html, re.DOTALL)
-        author = re.search(r'class="author"[^>]*>By\s*(.*?)</span>', html)
-        date = re.search(r'class="date"[^>]*>(.*?)</span>', html)
-        entries.append({
-            "filename": path.name,
-            "headline": headline.group(1).strip() if headline else path.stem,
-            "publication": publication.group(1).strip() if publication else "",
-            "author": author.group(1).strip() if author else "",
-            "date": date.group(1).strip() if date else "",
-        })
-
-    rows = ""
-    for e in entries:
-        rows += f"""
-        <tr>
-            <td><a href="{e['filename']}">{e['headline']}</a></td>
-            <td>{e['publication']}</td>
-            <td>{e['author']}</td>
-            <td>{e['date']}</td>
-        </tr>"""
-
-    index_html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI-Generated Articles — Research Index</title>
-    <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #1a1a1a; }}
-        .banner {{ background: #b91c1c; color: white; padding: 18px 32px; }}
-        .banner h1 {{ font-size: 1.1em; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }}
-        .container {{ max-width: 1000px; margin: 32px auto; padding: 0 24px; }}
-        .disclaimer-box {{
-            background: #fff8e1;
-            border: 2px solid #f59e0b;
-            border-left: 6px solid #b91c1c;
-            border-radius: 6px;
-            padding: 24px 28px;
-            margin-bottom: 36px;
-        }}
-        .disclaimer-box h2 {{ color: #b91c1c; font-size: 1.15em; margin-bottom: 12px; }}
-        .disclaimer-box p {{ color: #444; line-height: 1.7; margin-bottom: 10px; font-size: 0.95em; }}
-        .disclaimer-box p:last-child {{ margin-bottom: 0; }}
-        .disclaimer-box strong {{ color: #b91c1c; }}
-        h2.section-title {{ font-size: 1em; text-transform: uppercase; letter-spacing: 0.08em; color: #555; margin-bottom: 16px; }}
-        table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }}
-        thead {{ background: #1a1a1a; color: white; }}
-        th {{ padding: 12px 16px; text-align: left; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.06em; }}
-        td {{ padding: 12px 16px; border-bottom: 1px solid #e5e7eb; font-size: 0.92em; vertical-align: top; }}
-        tr:last-child td {{ border-bottom: none; }}
-        tr:hover td {{ background: #f9fafb; }}
-        td a {{ color: #1d4ed8; text-decoration: none; font-weight: 500; }}
-        td a:hover {{ text-decoration: underline; }}
-        .empty {{ padding: 32px; text-align: center; color: #888; font-size: 0.95em; }}
-        .count {{ color: #6b7280; font-size: 0.85em; margin-bottom: 10px; }}
-    </style>
-</head>
-<body>
-    <div class="banner">
-        <h1>SUTD Capstone Research — AI-Generated Article Corpus</h1>
-    </div>
-    <div class="container">
-        <div class="disclaimer-box">
-            <h2>&#9888; Research Disclaimer — Read Before Proceeding</h2>
-            <p>
-                This page is part of a <strong>SUTD Capstone research project</strong> investigating the robustness
-                of AI-generated misinformation detection systems. All articles listed below are
-                <strong>entirely fabricated by a large language model (LLM)</strong> and were generated
-                for the sole purpose of evaluating automated classifiers.
-            </p>
-            <p>
-                <strong>The articles are fake.</strong> Every headline, author name, publication name,
-                quote, statistic, and event described within them is fictional and was synthetically
-                produced. None of the content reflects real events, real statements by real people,
-                or factual information of any kind.
-            </p>
-            <p>
-                The individual article pages intentionally omit AI-generation notices so that the
-                classifier under evaluation does not encounter any superficial textual cues that
-                would introduce bias into the experiment. The disclaimer you are reading <em>now</em>
-                is the authoritative source of context for this corpus.
-            </p>
-            <p>
-                <strong>Do not share, republish, or present any of these articles as real.</strong>
-                Misuse of synthetically generated misinformation content, even for unintentional
-                distribution, can cause real-world harm.
-            </p>
-        </div>
-
-        <h2 class="section-title">Generated Articles</h2>
-        <p class="count">{len(entries)} article{"s" if len(entries) != 1 else ""} in corpus &mdash; newest first</p>
-        <table>
-            <thead>
-                <tr>
-                    <th>Headline</th>
-                    <th>Publication</th>
-                    <th>Author</th>
-                    <th>Date</th>
-                </tr>
-            </thead>
-            <tbody>
-                {"<tr><td colspan='4' class='empty'>No articles generated yet.</td></tr>" if not entries else rows}
-            </tbody>
-        </table>
-    </div>
-</body>
-</html>
-"""
-    index_path = ARTICLES_DIR / "index.html"
-    index_path.write_text(index_html, encoding="utf-8")
 
 
 # =========================================================================
@@ -252,7 +121,8 @@ class GenerateImageResponse(BaseModel):
 
 
 class GenerateVideoRequest(BaseModel):
-    prompt: str
+    image_filename: str  # Filename of the generated image to convert to video
+    narration_prompt: str  # Description of what happens/is said in the video
 
 
 class GenerateVideoResponse(BaseModel):
@@ -269,8 +139,6 @@ class VideoStatusResponse(BaseModel):
 class GenerateArticleRequest(BaseModel):
     target_id: str
     narrative_id: str
-    image_prompt: str
-    article_prompt: str
     image_prompt: str
     article_prompt: str
 
@@ -358,7 +226,7 @@ Output as JSON:
         orchestration_prompt = f"""You are a prompt engineer creating descriptive prompts for AI media generation.
 
 Your task: Write a single, highly descriptive prompt for generating a realistic {media_type} that depicts 
-a misinformation scenario. This is for an EDUCATIONAL DEMONSTRATION of an AI misinformation detection system.
+a misinformation scenario. 
 
 Target Person: {target['name']} ({target['role']})
 Misinformation Narrative: {narrative['title']} - {narrative['description']}
@@ -366,12 +234,11 @@ Misinformation Narrative: {narrative['title']} - {narrative['description']}
 Requirements for your prompt:
 - Describe a realistic scene that would be believable as real media
 - Include specific visual details: setting, lighting, clothing, expressions, background
-- For video: include motion, camera angles, and any dialogue or text overlays
-- The scene should clearly depict the misinformation narrative
-- Make it look like it could be a real news clip, social media post, or press event
-- Do NOT include any disclaimers or ethical warnings in the prompt itself
+- Specify any text overlays (e.g. "Breaking News" banner)
+- Make it look like a real news clip, social media post, or press event
 - Keep the prompt under 200 words
-- Output ONLY the generation prompt, nothing else"""
+- Output ONLY the generation prompt, nothing else
+"""
 
     try:
         # Using Gemini for now (Grok code commented out below)
@@ -493,31 +360,124 @@ async def generate_image(request: GenerateImageRequest):
         raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
 
 
-@app.post("/api/generate-video", response_model=GenerateVideoResponse)
-async def generate_video(request: GenerateVideoRequest):
+@app.post("/api/generate-narration")
+async def generate_narration(request: dict):
     """
-    Start video generation using Veo 3.1 Fast.
-    Returns an operation ID to poll for status.
+    Generate a narration prompt for video based on the image prompt.
+    This describes what is being said/narrated in the video.
     """
     if not GOOGLE_API_KEY:
         raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured")
+    
+    image_prompt = request.get("image_prompt", "")
+    target_id = request.get("target_id", "")
+    narrative_id = request.get("narrative_id", "")
+    
+    # Find target and narrative
+    target = next((t for t in TARGETS if t["id"] == target_id), None)
+    narrative = next((n for n in NARRATIVES if n["id"] == narrative_id), None)
+    
+    if not target or not narrative:
+        raise HTTPException(status_code=404, detail="Target or narrative not found")
+    
+    narration_orchestration = f"""You are creating a narration/voiceover script for a short video clip.
 
+The video will be based on this image:
+{image_prompt}
+
+Target Person: {target['name']} ({target['role']})
+Misinformation Narrative: {narrative['title']} - {narrative['description']}
+
+Your task: Write a detailed narration prompt that describes:
+1. What {target['name']} is saying (direct quotes or paraphrased speech)
+2. Any voiceover narration explaining the scene
+3. Camera movements or visual actions (e.g., "camera zooms in", "person walks forward")
+4. Text overlays that should appear (e.g., "Breaking News banner")
+5. Background sounds or music mood
+
+The narration should:
+- Match the visual scene from the image prompt above
+- Clearly convey the misinformation narrative
+- Sound natural and believable as a real news clip or social media video
+- Be 100-150 words
+- NOT include any disclaimers
+
+Output ONLY the narration prompt, nothing else."""
+    
     try:
-        operation = client.models.generate_videos(
-            model=VIDEO_MODEL,
-            prompt=request.prompt,
-            config=types.GenerateVideosConfig(
-                aspect_ratio="16:9",
+        response = client.models.generate_content(
+            model=PROMPT_MODEL,
+            contents=[narration_orchestration],
+            config=types.GenerateContentConfig(
+                temperature=0.7,
+                max_output_tokens=400,
             ),
         )
+        
+        if not response.candidates or len(response.candidates) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Narration generation blocked by safety filters."
+            )
+        
+        narration_prompt = response.text.strip()
+        
+        return {
+            "narration_prompt": narration_prompt,
+            "target": target,
+            "narrative": narrative,
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Narration generation failed: {str(e)}")
 
+
+@app.post("/api/generate-video", response_model=GenerateVideoResponse)
+async def generate_video(request: GenerateVideoRequest):
+    """
+    Start video generation using FAL image-to-video (Grok Imagine Video).
+    Takes a generated image and narration prompt, returns an operation ID to poll for status.
+    """
+    if not FAL_KEY:
+        raise HTTPException(status_code=500, detail="FAL_KEY not configured")
+    
+    # Check if image file exists
+    image_path = GENERATED_DIR / request.image_filename
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail=f"Image file '{request.image_filename}' not found")
+    
+    try:
+        # Use Base64 data URI instead of upload_file (more reliable per FAL docs)
+        with open(image_path, 'rb') as img_file:
+            image_data = base64.b64encode(img_file.read()).decode('utf-8')
+        image_url = f"data:image/png;base64,{image_data}"
+        
+        print(f"[BACKEND] Starting FAL image-to-video generation...")
+        print(f"[BACKEND] Using Base64 data URI for image (size: {len(image_data)} bytes)")
+        print(f"[BACKEND] Narration prompt: {request.narration_prompt}")
+        
+        # Submit video generation request to FAL (async)
+        handler = fal_client.submit(
+            "xai/grok-imagine-video/image-to-video",
+            arguments={
+                "image_url": image_url,
+                "prompt": request.narration_prompt,
+            },
+        )
+        
         op_id = uuid.uuid4().hex[:12]
         video_operations[op_id] = {
-            "operation": operation,
+            "fal_handler": handler,
+            "request_id": handler.request_id,
             "status": "pending",
             "created_at": time.time(),
+            "image_filename": request.image_filename,
         }
-
+        
+        print(f"[BACKEND] FAL video generation started with operation_id={op_id}, request_id={handler.request_id}")
+        
         return GenerateVideoResponse(
             operation_id=op_id,
             status="pending",
@@ -535,6 +495,9 @@ async def generate_article(request: GenerateArticleRequest):
     3. Render HTML from template
     4. Save locally and return URLs
     """
+    print(f"[BACKEND] Received generate-article request: target={request.target_id}, narrative={request.narrative_id}")
+    print(f"[BACKEND] Image prompt length: {len(request.image_prompt)}, Article prompt length: {len(request.article_prompt)}")
+    
     if not GOOGLE_API_KEY:
         raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured")
     
@@ -547,6 +510,7 @@ async def generate_article(request: GenerateArticleRequest):
     if not narrative:
         raise HTTPException(status_code=404, detail=f"Narrative '{request.narrative_id}' not found")
     
+    print(f"[BACKEND] Starting image generation...")
     try:
         # Step 1: Generate image using the provided image_prompt
         image_response = client.models.generate_content(
@@ -569,7 +533,7 @@ async def generate_article(request: GenerateArticleRequest):
         for part in image_response.candidates[0].content.parts:
             if part.inline_data is not None:
                 image_filename = f"article_{uuid.uuid4().hex[:8]}.png"
-                image_path = ARTICLE_IMAGES_DIR / image_filename
+                image_path = GENERATED_DIR / image_filename
                 
                 image_bytes = part.inline_data.data
                 if isinstance(image_bytes, str):
@@ -584,6 +548,9 @@ async def generate_article(request: GenerateArticleRequest):
                 status_code=400,
                 detail="Failed to generate image. The model blocked the content. Try modifying the image prompt."
             )
+        
+        print(f"[BACKEND] Image generated successfully: {image_filename}")
+        print(f"[BACKEND] Starting article text generation...")
         
         # Step 2: Generate article text using the provided article_prompt
         article_text_prompt = f"""Using this scenario description:
@@ -630,6 +597,7 @@ Output ONLY valid JSON with no markdown formatting:
             )
         
         article_text = response.text.strip()
+        print(f"[BACKEND] Article text generated, length: {len(article_text)}")
         
         # GROK: Uncomment below to use Grok instead of Gemini
         # chat = grok_client.chat.create(model=PROMPT_MODEL)
@@ -661,7 +629,7 @@ Output ONLY valid JSON with no markdown formatting:
             author=article_data["author"],
             publication=article_data["publication"],
             date=current_date,
-            image_url=f"images/{image_filename}",
+            image_url=f"/generated/{image_filename}",
             body=article_data["body"],
             year=datetime.now().year
         )
@@ -672,9 +640,8 @@ Output ONLY valid JSON with no markdown formatting:
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_content)
         
-        # Rebuild the article index
-        update_articles_index()
-
+        print(f"[BACKEND] Article saved: {html_filename}")
+        
         # Store article metadata
         articles_store[article_id] = {
             "headline": article_data["headline"],
@@ -686,11 +653,13 @@ Output ONLY valid JSON with no markdown formatting:
             "published_url": None,
         }
         
+        print(f"[BACKEND] Article generation complete! Returning response for article_id={article_id}")
+        
         return GenerateArticleResponse(
             article_id=article_id,
             article_url=f"/articles/{html_filename}",
             headline=article_data["headline"],
-            image_url=f"/articles/images/{image_filename}",
+            image_url=f"/generated/{image_filename}",
             published_url=None,
         )
     
@@ -711,165 +680,29 @@ Output ONLY valid JSON with no markdown formatting:
 @app.post("/api/publish-article/{article_id}")
 async def publish_article(article_id: str):
     """
-    Deploy the entire backend/generated/articles/ directory to Cloudflare Pages
-    via the Direct Upload API and return the live article URL.
+    Publish article to your hosted domain.
+    For now, returns the local article URL.
+    TODO: Implement actual publishing to GitHub Pages, Cloudflare, or other hosting.
     """
     if article_id not in articles_store:
         raise HTTPException(status_code=404, detail="Article not found")
-
-    if not all([CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_PROJECT_NAME]):
-        raise HTTPException(
-            status_code=500,
-            detail="Cloudflare credentials not configured. Set CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, and CLOUDFLARE_PROJECT_NAME in .env"
-        )
-
+    
     article = articles_store[article_id]
-
-    # Collect files and compute hashes using the same algorithm Wrangler uses:
-    # BLAKE3( base64(file_bytes) + extension_without_dot )[:32]
-    manifest: dict[str, str] = {}
-    file_contents: dict[str, tuple[bytes, str]] = {}  # hash -> (bytes, content-type)
-
-    MIME_TYPES = {
-        ".html": "text/html",
-        ".css": "text/css",
-        ".js": "application/javascript",
-        ".json": "application/json",
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".gif": "image/gif",
-        ".svg": "image/svg+xml",
-        ".webp": "image/webp",
-        ".ico": "image/x-icon",
-        ".woff": "font/woff",
-        ".woff2": "font/woff2",
-        ".ttf": "font/ttf",
-    }
-
-    def cf_hash(content: bytes, suffix: str) -> str:
-        ext = suffix.lstrip(".").lower()
-        data = base64.b64encode(content).decode() + ext
-        return blake3.blake3(data.encode()).hexdigest()[:32]
-
-    for file_path in ARTICLES_DIR.rglob("*"):
-        if file_path.is_file():
-            content = file_path.read_bytes()
-            file_hash = cf_hash(content, file_path.suffix)
-            arcname = "/" + file_path.relative_to(ARTICLES_DIR).as_posix()
-            manifest[arcname] = file_hash
-            mime = MIME_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
-            file_contents[file_hash] = (content, mime)
-
-    cf_base = f"https://api.cloudflare.com/client/v4"
-    cf_headers = {"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"}
-
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            # Step 1: Get an upload JWT
-            token_resp = await client.get(
-                f"{cf_base}/accounts/{CLOUDFLARE_ACCOUNT_ID}"
-                f"/pages/projects/{CLOUDFLARE_PROJECT_NAME}/upload-token",
-                headers=cf_headers,
-            )
-            if token_resp.status_code != 200 or not token_resp.json().get("success"):
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Failed to get upload token: {token_resp.text[:500]}"
-                )
-            upload_jwt = token_resp.json()["result"]["jwt"]
-            jwt_headers = {"Authorization": f"Bearer {upload_jwt}"}
-
-            # Step 2a: Check which hashes Cloudflare already has
-            check_resp = await client.post(
-                f"{cf_base}/pages/assets/check-missing",
-                headers=jwt_headers,
-                json={"hashes": list(file_contents.keys())},
-            )
-            if check_resp.status_code != 200 or not check_resp.json().get("success"):
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Failed to check missing assets: {check_resp.text[:500]}"
-                )
-            missing_hashes: list[str] = check_resp.json().get("result", [])
-
-            # Step 2b: Upload only the missing files
-            if missing_hashes:
-                upload_payload = [
-                    {
-                        "key": h,
-                        "value": base64.b64encode(file_contents[h][0]).decode(),
-                        "metadata": {"contentType": file_contents[h][1]},
-                        "base64": True,
-                    }
-                    for h in missing_hashes
-                    if h in file_contents
-                ]
-                upload_resp = await client.post(
-                    f"{cf_base}/pages/assets/upload",
-                    headers=jwt_headers,
-                    json=upload_payload,
-                )
-                if upload_resp.status_code != 200 or not upload_resp.json().get("success"):
-                    raise HTTPException(
-                        status_code=502,
-                        detail=f"Failed to upload assets: {upload_resp.text[:500]}"
-                    )
-
-            # Step 2c: Upsert all hashes
-            upsert_resp = await client.post(
-                f"{cf_base}/pages/assets/upsert-hashes",
-                headers=jwt_headers,
-                json={"hashes": list(file_contents.keys())},
-            )
-            if upsert_resp.status_code != 200 or not upsert_resp.json().get("success"):
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Failed to upsert hashes: {upsert_resp.text[:500]}"
-                )
-
-            # Step 3: Create the deployment — multipart/form-data required by Cloudflare.
-            # Using files= with (None, value) tuples is the httpx pattern for sending
-            # multipart text fields. branch, commit_hash, commit_message are all required.
-            response = await client.post(
-                f"{cf_base}/accounts/{CLOUDFLARE_ACCOUNT_ID}"
-                f"/pages/projects/{CLOUDFLARE_PROJECT_NAME}/deployments",
-                headers=cf_headers,
-                files={
-                    "branch":         (None, "main"),
-                    "commit_message": (None, f"Publish article {article_id}"),
-                    "commit_hash":    (None, article_id.replace("-", "")[:40].ljust(40, "0")),
-                    "manifest":       (None, json.dumps(manifest)),
-                },
-            )
-    except HTTPException:
-        raise
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Cloudflare API timed out.")
-    except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail=f"Network error: {str(exc)}")
-
-    if response.status_code not in (200, 201):
-        raise HTTPException(
-            status_code=502,
-            detail=f"Cloudflare error {response.status_code}: {response.text[:500]}"
-        )
-
-    cf_data = response.json()
-    if not cf_data.get("success"):
-        raise HTTPException(
-            status_code=502,
-            detail=f"Cloudflare deployment failed: {cf_data.get('errors', [])}"
-        )
-
-    published_url = f"https://{CLOUDFLARE_PROJECT_NAME}.pages.dev/{article_id}.html"
+    
+    # For now, just return the local URL
+    # In production, implement actual publishing here:
+    # - Upload to GitHub Pages
+    # - Upload to Cloudflare R2
+    # - Deploy to Vercel/Netlify
+    
+    published_url = f"http://localhost:8000/articles/{article_id}.html"
     articles_store[article_id]["published_url"] = published_url
-
+    
     return {
         "article_id": article_id,
         "published_url": published_url,
         "headline": article["headline"],
-        "message": "Deployed to Cloudflare Pages. Allow ~30 seconds for propagation.",
+        "message": "Article is available locally. Configure hosting for public publishing."
     }
 
 
@@ -885,34 +718,51 @@ async def get_article_info(article_id: str):
 @app.get("/api/video-status/{operation_id}", response_model=VideoStatusResponse)
 async def get_video_status(operation_id: str):
     """
-    Check the status of a video generation operation.
+    Check the status of a FAL image-to-video generation operation.
     When complete, returns the video URL.
     """
     if operation_id not in video_operations:
         raise HTTPException(status_code=404, detail="Operation not found")
 
     op_data = video_operations[operation_id]
-    operation = op_data["operation"]
-
+    request_id = op_data["request_id"]
+    
     try:
-        # Check if operation is done
-        if not operation.done:
-            operation = client.operations.get(operation)
-            video_operations[operation_id]["operation"] = operation
-
-        if operation.done:
-            if operation.response and operation.response.generated_videos:
-                generated_video = operation.response.generated_videos[0]
+        # Check FAL operation status - it returns different object types
+        status_result = fal_client.status(
+            "xai/grok-imagine-video/image-to-video",
+            request_id,
+            with_logs=True
+        )
+        
+        print(f"[BACKEND] Checking video status for operation_id={operation_id}, request_id={request_id}")
+        print(f"[BACKEND] FAL status type: {type(status_result).__name__}")
+        
+        # Check if it's a Completed object - need to call result() to get the actual data
+        if hasattr(status_result, '__class__') and status_result.__class__.__name__ == 'Completed':
+            print(f"[BACKEND] Video generation completed! Fetching result...")
+            
+            # Get the actual result data
+            result = fal_client.result("xai/grok-imagine-video/image-to-video", request_id)
+            print(f"[BACKEND] Result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
+            
+            if result and "video" in result:
+                video_url = result["video"]["url"]
                 
-                # Download the video
+                # Download the video from FAL to local storage
                 filename = f"generated_{uuid.uuid4().hex[:8]}.mp4"
                 filepath = GENERATED_DIR / filename
-
-                client.files.download(file=generated_video.video)
-                generated_video.video.save(str(filepath))
-
+                
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(video_url)
+                    with open(filepath, "wb") as f:
+                        f.write(response.content)
+                
                 video_operations[operation_id]["status"] = "complete"
-
+                
+                print(f"[BACKEND] Video downloaded and saved to {filename}")
+                
                 return VideoStatusResponse(
                     status="complete",
                     video_url=f"/generated/{filename}",
@@ -922,12 +772,52 @@ async def get_video_status(operation_id: str):
                 video_operations[operation_id]["status"] = "failed"
                 return VideoStatusResponse(
                     status="failed",
-                    error="Video generation completed but no video was produced. Safety filters may have blocked the content.",
+                    error="Video generation completed but no video was returned.",
                 )
-
+        
+        # Check if it's a completed result (dict with 'video' key) - fallback
+        elif isinstance(status_result, dict) and "video" in status_result:
+            video_url = status_result["video"]["url"]
+            
+            # Download the video from FAL to local storage
+            filename = f"generated_{uuid.uuid4().hex[:8]}.mp4"
+            filepath = GENERATED_DIR / filename
+            
+            import httpx
+            async with httpx.AsyncClient() as client:
+                response = await client.get(video_url)
+                with open(filepath, "wb") as f:
+                    f.write(response.content)
+            
+            video_operations[operation_id]["status"] = "complete"
+            
+            print(f"[BACKEND] Video generation complete! Saved to {filename}")
+            
+            return VideoStatusResponse(
+                status="complete",
+                video_url=f"/generated/{filename}",
+                filename=filename,
+            )
+        
+        # Check if it's an InProgress object
+        elif isinstance(status_result, fal_client.InProgress):
+            print(f"[BACKEND] Video generation in progress...")
+            if hasattr(status_result, 'logs') and status_result.logs:
+                for log in status_result.logs:
+                    print(f"[BACKEND] FAL log: {log.get('message', '')}")
+            return VideoStatusResponse(status="pending")
+        
+        # Check if it's a Queued object
+        elif hasattr(status_result, '__class__') and status_result.__class__.__name__ == 'Queued':
+            print(f"[BACKEND] Video generation queued...")
+            return VideoStatusResponse(status="pending")
+        
+        # Unknown status type - still pending
+        print(f"[BACKEND] Unknown status type, treating as pending")
         return VideoStatusResponse(status="pending")
 
     except Exception as e:
+        print(f"[BACKEND] Error checking video status: {str(e)}")
         video_operations[operation_id]["status"] = "failed"
         return VideoStatusResponse(
             status="failed",

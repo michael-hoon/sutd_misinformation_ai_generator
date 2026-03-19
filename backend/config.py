@@ -13,8 +13,8 @@ load_dotenv()
 # --- Google AI SDK ---
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
-# --- fal.ai API for Grok Image Generation (COMMENTED OUT - using Gemini Nano Banana) ---
-# FAL_KEY = os.getenv("FAL_KEY", "")  # FAL: Uncomment to use Grok Imagine via fal.ai
+# --- fal.ai API for Image-to-Video Generation ---
+FAL_KEY = os.getenv("FAL_KEY", "")  # For image-to-video with Grok Imagine Video
 # --- Model Configuration ---
 PROMPT_MODEL = "gemini-3.1-flash-lite-preview"          # Gemini for prompt orchestration (Grok commented out)
 # PROMPT_MODEL = "grok-4.20-beta-latest-non-reasoning"  # GROK: Uncomment to use Grok instead
