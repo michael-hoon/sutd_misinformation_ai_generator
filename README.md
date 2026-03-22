@@ -68,7 +68,7 @@ Open http://localhost:5173 in your browser.
 |-----------|-----------|
 | Frontend | React 19, Vite 7, Tailwind CSS v4 |
 | Backend | FastAPI, Python |
-| AI Models | Gemini 3 Flash, Gemini 3.1 Flash Image, Veo 3.1 Fast |
+| AI Models | Gemini 3 Flash, Gemini 3.1 Flash Image, Grok Imagine |
 | SDK | `google-genai` (Google AI SDK) |
 
 ## API Endpoints

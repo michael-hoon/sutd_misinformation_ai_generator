@@ -28,12 +28,17 @@ import fal_client
 # from xai_sdk import Client
 # from xai_sdk.chat import user, system
 from jinja2 import Template
+import blake3
+import httpx
 
 from config import (
     GOOGLE_API_KEY,
     FAL_KEY,
     # XAI_API_KEY,  # GROK: Uncomment to use Grok
     GOOGLE_DRIVE_FOLDER_ID,
+    CLOUDFLARE_ACCOUNT_ID,
+    CLOUDFLARE_API_TOKEN,
+    CLOUDFLARE_PROJECT_NAME,
     PROMPT_MODEL,
     IMAGE_MODEL,
     VIDEO_MODEL,
@@ -443,10 +448,13 @@ async def generate_video(request: GenerateVideoRequest):
     if not FAL_KEY:
         raise HTTPException(status_code=500, detail="FAL_KEY not configured")
     
-    # Check if image file exists
-    image_path = GENERATED_DIR / request.image_filename
+    # Check if image file exists - try both locations (articles/images/ and generated/)
+    image_path = ARTICLES_DIR / "images" / request.image_filename
     if not image_path.exists():
-        raise HTTPException(status_code=404, detail=f"Image file '{request.image_filename}' not found")
+        # Fallback to old location for standalone images
+        image_path = GENERATED_DIR / request.image_filename
+        if not image_path.exists():
+            raise HTTPException(status_code=404, detail=f"Image file '{request.image_filename}' not found")
     
     try:
         # Use Base64 data URI instead of upload_file (more reliable per FAL docs)
@@ -530,10 +538,14 @@ async def generate_article(request: GenerateArticleRequest):
         
         # Extract and save image
         image_filename = None
+        # Create images directory if it doesn't exist
+        images_dir = ARTICLES_DIR / "images"
+        images_dir.mkdir(exist_ok=True)
+        
         for part in image_response.candidates[0].content.parts:
             if part.inline_data is not None:
                 image_filename = f"article_{uuid.uuid4().hex[:8]}.png"
-                image_path = GENERATED_DIR / image_filename
+                image_path = images_dir / image_filename
                 
                 image_bytes = part.inline_data.data
                 if isinstance(image_bytes, str):
@@ -629,7 +641,7 @@ Output ONLY valid JSON with no markdown formatting:
             author=article_data["author"],
             publication=article_data["publication"],
             date=current_date,
-            image_url=f"/generated/{image_filename}",
+            image_url=f"images/{image_filename}",
             body=article_data["body"],
             year=datetime.now().year
         )
@@ -659,7 +671,7 @@ Output ONLY valid JSON with no markdown formatting:
             article_id=article_id,
             article_url=f"/articles/{html_filename}",
             headline=article_data["headline"],
-            image_url=f"/generated/{image_filename}",
+            image_url=f"/articles/images/{image_filename}",
             published_url=None,
         )
     
@@ -680,29 +692,165 @@ Output ONLY valid JSON with no markdown formatting:
 @app.post("/api/publish-article/{article_id}")
 async def publish_article(article_id: str):
     """
-    Publish article to your hosted domain.
-    For now, returns the local article URL.
-    TODO: Implement actual publishing to GitHub Pages, Cloudflare, or other hosting.
+    Deploy the entire backend/generated/articles/ directory to Cloudflare Pages
+    via the Direct Upload API and return the live article URL.
     """
     if article_id not in articles_store:
         raise HTTPException(status_code=404, detail="Article not found")
-    
+
+    if not all([CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, CLOUDFLARE_PROJECT_NAME]):
+        raise HTTPException(
+            status_code=500,
+            detail="Cloudflare credentials not configured. Set CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, and CLOUDFLARE_PROJECT_NAME in .env"
+        )
+
     article = articles_store[article_id]
+
+    # Collect files and compute hashes using the same algorithm Wrangler uses:
+    # BLAKE3( base64(file_bytes) + extension_without_dot )[:32]
+    manifest: dict[str, str] = {}
+    file_contents: dict[str, tuple[bytes, str]] = {}  # hash -> (bytes, content-type)
     
-    # For now, just return the local URL
-    # In production, implement actual publishing here:
-    # - Upload to GitHub Pages
-    # - Upload to Cloudflare R2
-    # - Deploy to Vercel/Netlify
+    MIME_TYPES = {
+        ".html": "text/html",
+        ".css": "text/css",
+        ".js": "application/javascript",
+        ".json": "application/json",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+        ".webp": "image/webp",
+        ".ico": "image/x-icon",
+        ".woff": "font/woff",
+        ".woff2": "font/woff2",
+        ".ttf": "font/ttf",
+    }
+
+    def cf_hash(content: bytes, suffix: str) -> str:
+        ext = suffix.lstrip(".").lower()
+        data = base64.b64encode(content).decode() + ext
+        return blake3.blake3(data.encode()).hexdigest()[:32]
+
+    for file_path in ARTICLES_DIR.rglob("*"):
+        if file_path.is_file():
+            content = file_path.read_bytes()
+            file_hash = cf_hash(content, file_path.suffix)
+            arcname = "/" + file_path.relative_to(ARTICLES_DIR).as_posix()
+            manifest[arcname] = file_hash
+            content_type = MIME_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
+            file_contents[file_hash] = (content, content_type)
+
+    # Cloudflare API requests
+    cf_base = "https://api.cloudflare.com/client/v4"
+    cf_headers = {"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Step 1: Get upload JWT
+            jwt_resp = await client.get(
+                f"{cf_base}/accounts/{CLOUDFLARE_ACCOUNT_ID}/pages/projects/{CLOUDFLARE_PROJECT_NAME}/upload-token",
+                headers=cf_headers,
+            )
+            if jwt_resp.status_code != 200 or not jwt_resp.json().get("success"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to get upload JWT: {jwt_resp.text[:500]}"
+                )
+            upload_jwt = jwt_resp.json()["result"]["jwt"]
+            jwt_headers = {"Authorization": f"Bearer {upload_jwt}"}
+
+            # Step 2a: Check missing hashes
+            check_resp = await client.post(
+                f"{cf_base}/pages/assets/check-missing",
+                headers=jwt_headers,
+                json={"hashes": list(file_contents.keys())},
+            )
+            if check_resp.status_code != 200 or not check_resp.json().get("success"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to check missing assets: {check_resp.text[:500]}"
+                )
+            missing_hashes = check_resp.json()["result"]
+
+            # Step 2b: Upload missing files
+            if missing_hashes:
+                upload_payload = [
+                    {
+                        "key": h,
+                        "value": base64.b64encode(file_contents[h][0]).decode(),
+                        "metadata": {"contentType": file_contents[h][1]},
+                        "base64": True,
+                    }
+                    for h in missing_hashes
+                    if h in file_contents
+                ]
+                upload_resp = await client.post(
+                    f"{cf_base}/pages/assets/upload",
+                    headers=jwt_headers,
+                    json=upload_payload,
+                )
+                if upload_resp.status_code != 200 or not upload_resp.json().get("success"):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Failed to upload assets: {upload_resp.text[:500]}"
+                    )
+
+            # Step 2c: Upsert all hashes
+            upsert_resp = await client.post(
+                f"{cf_base}/pages/assets/upsert-hashes",
+                headers=jwt_headers,
+                json={"hashes": list(file_contents.keys())},
+            )
+            if upsert_resp.status_code != 200 or not upsert_resp.json().get("success"):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to upsert hashes: {upsert_resp.text[:500]}"
+                )
+
+            # Step 3: Create the deployment — multipart/form-data required by Cloudflare.
+            # Using files= with (None, value) tuples is the httpx pattern for sending
+            # multipart text fields. branch, commit_hash, commit_message are all required.
+            response = await client.post(
+                f"{cf_base}/accounts/{CLOUDFLARE_ACCOUNT_ID}"
+                f"/pages/projects/{CLOUDFLARE_PROJECT_NAME}/deployments",
+                headers=cf_headers,
+                files={
+                    "branch":         (None, "main"),
+                    "commit_message": (None, f"Publish article {article_id}"),
+                    "commit_hash":    (None, article_id.replace("-", "")[:40].ljust(40, "0")),
+                    "manifest":       (None, json.dumps(manifest)),
+                },
+            )
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Cloudflare API timed out.")
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Network error: {str(exc)}")
     
-    published_url = f"http://localhost:8000/articles/{article_id}.html"
+    if response.status_code not in (200, 201):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cloudflare error {response.status_code}: {response.text[:500]}"
+        )
+
+    cf_data = response.json()
+    if not cf_data.get("success"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cloudflare deployment failed: {cf_data.get('errors', [])}"
+        )
+
+    published_url = f"https://{CLOUDFLARE_PROJECT_NAME}.pages.dev/{article_id}.html"
     articles_store[article_id]["published_url"] = published_url
-    
+
     return {
         "article_id": article_id,
         "published_url": published_url,
         "headline": article["headline"],
-        "message": "Article is available locally. Configure hosting for public publishing."
+        "message": "Deployed to Cloudflare Pages. Allow ~30 seconds for propagation.",
     }
 
 

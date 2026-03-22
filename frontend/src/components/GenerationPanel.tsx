@@ -406,8 +406,8 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
                   onClick={handleGenerateVideoImage}
                   disabled={!step1ImagePrompt.trim() || generatingStep === 2}
                   className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all cursor-pointer ${!step1ImagePrompt.trim() || generatingStep === 2
-                      ? 'bg-surface-700 text-text-muted cursor-not-allowed'
-                      : 'bg-gradient-to-r from-brand-500 to-brand-600 text-white hover:from-brand-400 hover:to-brand-500 shadow-lg hover:shadow-brand-500/25'
+                    ? 'bg-surface-700 text-text-muted cursor-not-allowed'
+                    : 'bg-gradient-to-r from-brand-500 to-brand-600 text-white hover:from-brand-400 hover:to-brand-500 shadow-lg hover:shadow-brand-500/25'
                     }`}
                 >
                   {generatingStep === 2 ? (
@@ -461,8 +461,8 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
                     onClick={handleGenerateVideoFromImage}
                     disabled={!step3NarrationPrompt.trim() || status === 'generating-media' || status === 'polling-video'}
                     className={`px-6 py-2.5 rounded-lg text-sm font-semibold transition-all cursor-pointer ${!step3NarrationPrompt.trim() || status === 'generating-media' || status === 'polling-video'
-                        ? 'bg-surface-700 text-text-muted cursor-not-allowed'
-                        : 'bg-gradient-to-r from-accent-500 to-accent-600 text-white hover:from-accent-400 hover:to-accent-500 shadow-lg hover:shadow-accent-500/25'
+                      ? 'bg-surface-700 text-text-muted cursor-not-allowed'
+                      : 'bg-gradient-to-r from-accent-500 to-accent-600 text-white hover:from-accent-400 hover:to-accent-500 shadow-lg hover:shadow-accent-500/25'
                       }`}
                   >
                     {status === 'generating-media' || status === 'polling-video' ? (
