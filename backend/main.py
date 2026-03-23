@@ -95,31 +95,57 @@ video_operations: dict = {}
 articles_store: dict = {}
 
 
-def update_articles_index() -> None:
-    """Rebuild index.html in ARTICLES_DIR listing all generated articles."""
-    article_files = sorted(
+def _extract_article_entry(path: Path) -> dict | None:
+    """Extract display metadata from a single article HTML file."""
+    try:
+        html = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    headline = (re.search(r"<title>(.*?)</title>", html) or re.search(r'class="headline"[^>]*>(.*?)</h1>', html, re.DOTALL))
+    publication = re.search(r'class="publication"[^>]*>(.*?)</div>', html, re.DOTALL)
+    author = re.search(r'class="author"[^>]*>By\s*(.*?)</span>', html)
+    date = re.search(r'class="date"[^>]*>(.*?)</span>', html)
+    return {
+        "filename": path.name,
+        "headline": headline.group(1).strip() if headline else path.stem,
+        "publication": publication.group(1).strip() if publication else "",
+        "author": author.group(1).strip() if author else "",
+        "date": date.group(1).strip() if date else "",
+    }
+
+
+def update_articles_index(remote_entries: list[dict] | None = None) -> list[dict]:
+    """
+    Rebuild index.html merging remote_entries (all previously published articles
+    from CF's _articles_meta.json) with locally available HTML files.
+
+    Articles present in remote_entries but deleted locally are preserved in the
+    index so that CF-hosted articles are never removed from the listing.
+
+    Returns the merged entries list for saving as _articles_meta.json.
+    """
+    # Start from remote entries keyed by filename so CF-only articles are preserved.
+    remote_by_filename: dict[str, dict] = {e["filename"]: e for e in (remote_entries or [])}
+
+    # Scan local HTML files: refresh metadata for existing entries, collect new ones.
+    local_files = sorted(
         [f for f in ARTICLES_DIR.glob("*.html") if f.name != "index.html"],
         key=lambda f: f.stat().st_mtime,
         reverse=True,
     )
+    new_local: list[dict] = []
+    for path in local_files:
+        entry = _extract_article_entry(path)
+        if entry:
+            if path.name in remote_by_filename:
+                remote_by_filename[path.name] = entry  # refresh metadata
+            else:
+                new_local.append(entry)  # brand-new article
 
-    entries = []
-    for path in article_files:
-        try:
-            html = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        headline = (re.search(r"<title>(.*?)</title>", html) or re.search(r'class="headline"[^>]*>(.*?)</h1>', html, re.DOTALL))
-        publication = re.search(r'class="publication"[^>]*>(.*?)</div>', html, re.DOTALL)
-        author = re.search(r'class="author"[^>]*>By\s*(.*?)</span>', html)
-        date = re.search(r'class="date"[^>]*>(.*?)</span>', html)
-        entries.append({
-            "filename": path.name,
-            "headline": headline.group(1).strip() if headline else path.stem,
-            "publication": publication.group(1).strip() if publication else "",
-            "author": author.group(1).strip() if author else "",
-            "date": date.group(1).strip() if date else "",
-        })
+    # Order: new local articles (newest first) then remote entries in original order.
+    remote_ordered = [remote_by_filename[e["filename"]] for e in (remote_entries or [])
+                      if e["filename"] in remote_by_filename]
+    entries = new_local + remote_ordered
 
     rows = ""
     for e in entries:
@@ -221,6 +247,7 @@ def update_articles_index() -> None:
 """
     index_path = ARTICLES_DIR / "index.html"
     index_path.write_text(index_html, encoding="utf-8")
+    return entries
 
 
 # =========================================================================
@@ -821,6 +848,52 @@ Output ONLY valid JSON with no markdown formatting:
             detail=f"Article generation failed: {str(e)}"
         )
 
+async def _sync_remote_articles(pages_url: str) -> dict[str, str]:
+    """
+    Download _catalog.json from the live Cloudflare Pages site, sync any files
+    listed there that are missing locally, then rebuild index.html.
+    Returns remote_catalog dict (path -> hash), empty dict on first deploy or error.
+    """
+    remote_catalog: dict[str, str] = {}
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as http:
+        try:
+            resp = await http.get(f"{pages_url}/_catalog.json")
+            if resp.status_code == 200:
+                try:
+                    remote_catalog = resp.json()
+                    if not isinstance(remote_catalog, dict):
+                        print("[SYNC] Warning: remote _catalog.json is not a JSON object; ignoring")
+                        remote_catalog = {}
+                    else:
+                        print(f"[SYNC] Fetched remote catalog with {len(remote_catalog)} entries")
+                except Exception as e:
+                    print(f"[SYNC] Warning: remote _catalog.json could not be parsed ({e})")
+            else:
+                print(f"[SYNC] Remote _catalog.json returned {resp.status_code}; first deployment or propagation delay")
+        except Exception as e:
+            print(f"[SYNC] Could not fetch remote _catalog.json ({e})")
+
+        # Re-download any catalog-listed files missing locally (best-effort).
+        for path in remote_catalog:
+            if path in ("/_catalog.json", "/index.html", "/_articles_meta.json"):
+                continue
+            local_path = ARTICLES_DIR / path.lstrip("/")
+            if not local_path.exists():
+                try:
+                    file_resp = await http.get(f"{pages_url}{path}")
+                    if file_resp.status_code == 200:
+                        local_path.parent.mkdir(parents=True, exist_ok=True)
+                        local_path.write_bytes(file_resp.content)
+                        print(f"[SYNC] Re-synced {path} from remote")
+                    else:
+                        print(f"[SYNC] Warning: could not fetch {path} (status {file_resp.status_code})")
+                except Exception as e:
+                    print(f"[SYNC] Warning: could not re-sync {path} ({e})")
+
+    update_articles_index()  # Rebuild with all articles (local + just-synced)
+    return remote_catalog
+
+
 @app.post("/api/publish-article/{article_id}")
 async def publish_article(article_id: str):
     """
@@ -865,14 +938,93 @@ async def publish_article(article_id: str):
         data = base64.b64encode(content).decode() + ext
         return blake3.blake3(data.encode()).hexdigest()[:32]
 
+    # Sync remote articles before building manifest so index.html and manifest
+    # include all previously published articles, not just local ones.
+    pages_url = f"https://{CLOUDFLARE_PROJECT_NAME}.pages.dev"
+    remote_catalog = await _sync_remote_articles(pages_url)
+
     for file_path in ARTICLES_DIR.rglob("*"):
         if file_path.is_file():
+            if file_path.name in ("_catalog.json", "_articles_meta.json"):
+                continue  # Rebuilt fresh below; never read a stale disk copy
             content = file_path.read_bytes()
             file_hash = cf_hash(content, file_path.suffix)
             arcname = "/" + file_path.relative_to(ARTICLES_DIR).as_posix()
             manifest[arcname] = file_hash
             content_type = MIME_TYPES.get(file_path.suffix.lower(), "application/octet-stream")
             file_contents[file_hash] = (content, content_type)
+
+    # Merge remote-only entries (e.g. images from other machines' articles).
+    # CF already holds their bytes by hash — no re-upload needed.
+    for remote_path, remote_hash in remote_catalog.items():
+        if remote_path not in manifest:
+            manifest[remote_path] = remote_hash
+
+    # After the full manifest is assembled, ensure every article HTML in it has
+    # a local copy so update_articles_index() can produce a complete index.html.
+    # Some files may not have been downloaded by _sync_remote_articles (e.g. if
+    # the sync fetch timed out or CF hadn't propagated yet).
+    missing_html = [
+        p for p in manifest
+        if p.endswith(".html") and p != "/index.html"
+        and not (ARTICLES_DIR / p.lstrip("/")).exists()
+    ]
+    if missing_html:
+        print(f"[PUBLISH] {len(missing_html)} article(s) in manifest still missing locally; re-fetching...")
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as fetch_client:
+            for path in missing_html:
+                try:
+                    resp = await fetch_client.get(f"{pages_url}{path}")
+                    if resp.status_code == 200:
+                        local_path = ARTICLES_DIR / path.lstrip("/")
+                        local_path.write_bytes(resp.content)
+                        # Add bytes to file_contents so CF can re-upload if needed
+                        h = cf_hash(resp.content, ".html")
+                        manifest[path] = h
+                        file_contents[h] = (resp.content, "text/html")
+                        print(f"[PUBLISH] Re-fetched {path}")
+                    else:
+                        print(f"[PUBLISH] Warning: CF returned {resp.status_code} for {path}")
+                except Exception as e:
+                    print(f"[PUBLISH] Warning: could not fetch {path}: {e}")
+
+    # Fetch the authoritative article list from CF so that articles deleted locally
+    # are never removed from index.html — they still exist on CF Pages.
+    remote_meta: list[dict] = []
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as meta_client:
+        try:
+            meta_resp = await meta_client.get(f"{pages_url}/_articles_meta.json")
+            if meta_resp.status_code == 200 and meta_resp.content:
+                data = meta_resp.json()
+                if isinstance(data, list):
+                    remote_meta = data
+                    print(f"[PUBLISH] Fetched remote article metadata ({len(remote_meta)} entries)")
+            else:
+                print(f"[PUBLISH] No existing article metadata on CF (status {meta_resp.status_code}); starting fresh")
+        except Exception as e:
+            print(f"[PUBLISH] Could not fetch remote article metadata: {e}")
+
+    # Rebuild index.html merging remote metadata with local files, then update manifest.
+    merged_entries = update_articles_index(remote_meta)
+    index_path = ARTICLES_DIR / "index.html"
+    if index_path.exists():
+        idx_bytes = index_path.read_bytes()
+        idx_hash = cf_hash(idx_bytes, ".html")
+        manifest["/index.html"] = idx_hash
+        file_contents[idx_hash] = (idx_bytes, "text/html")
+
+    # Build fresh _articles_meta.json from merged entries and add to manifest.
+    meta_bytes = json.dumps(merged_entries, indent=2).encode("utf-8")
+    meta_hash = cf_hash(meta_bytes, ".json")
+    manifest["/_articles_meta.json"] = meta_hash
+    file_contents[meta_hash] = (meta_bytes, "application/json")
+
+    # Build a fresh _catalog.json mapping all deployed paths to their hashes.
+    # Intentionally excludes its own entry to avoid a circular hash dependency.
+    catalog_bytes = json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8")
+    catalog_hash = cf_hash(catalog_bytes, ".json")
+    manifest["/_catalog.json"] = catalog_hash
+    file_contents[catalog_hash] = (catalog_bytes, "application/json")
 
     # Cloudflare API requests
     cf_base = "https://api.cloudflare.com/client/v4"
