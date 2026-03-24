@@ -142,10 +142,18 @@ def update_articles_index(remote_entries: list[dict] | None = None) -> list[dict
             else:
                 new_local.append(entry)  # brand-new article
 
-    # Order: new local articles (newest first) then remote entries in original order.
+    # Merge all entries and sort by date descending (newest first).
     remote_ordered = [remote_by_filename[e["filename"]] for e in (remote_entries or [])
                       if e["filename"] in remote_by_filename]
-    entries = new_local + remote_ordered
+    all_entries = new_local + remote_ordered
+
+    def _parse_date(entry: dict) -> datetime:
+        try:
+            return datetime.strptime(entry.get("date", ""), "%B %d, %Y")
+        except ValueError:
+            return datetime.min
+
+    entries = sorted(all_entries, key=_parse_date, reverse=True)
 
     rows = ""
     for e in entries:
