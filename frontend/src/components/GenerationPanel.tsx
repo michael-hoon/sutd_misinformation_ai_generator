@@ -132,7 +132,7 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
     setGeneratingStep(2);
     setError('');
     try {
-      const result = await generateImage(step1ImagePrompt);
+      const result = await generateImage(step1ImagePrompt, target.id);
       setStep2Image({
         url: getMediaUrl(result.image_url),
         filename: result.filename,

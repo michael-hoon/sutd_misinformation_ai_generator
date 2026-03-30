@@ -45,6 +45,7 @@ from config import (
     VIDEO_MODEL,
     TARGETS,
     NARRATIVES,
+    SAMPLE_IMAGES_DIR,
 )
 from drive_upload import upload_file_to_drive
 
@@ -274,6 +275,7 @@ class PromptResponse(BaseModel):
 
 class GenerateImageRequest(BaseModel):
     prompt: str
+    target_id: str | None = None  # Optional: used to send portrait reference image
 
 
 class GenerateImageResponse(BaseModel):
@@ -353,6 +355,14 @@ async def generate_prompt(request: PromptRequest):
 
     # Special handling for article generation: need TWO coordinated prompts
     if request.generation_type == "article":
+        use_portrait = target.get("send_portrait_with_prompt", False)
+        portrait_note = (
+            f"\nIMPORTANT: A reference portrait photo of {target['name']} will be sent directly to the image"
+            f" generation model alongside the image prompt. The IMAGE PROMPT you write MUST begin with:"
+            f" \"The attached photo is {target['name']}. Using this reference photo as the face, ...\""
+            f" so that the model knows to use it as a facial reference."
+        ) if use_portrait else ""
+
         orchestration_prompt = f"""You are a prompt engineer creating coordinated prompts for generating a fake news article.
 
 Target Person: {target['name']} ({target['role']})
@@ -365,7 +375,7 @@ Your task: Create TWO detailed prompts that tell the SAME STORY:
    - Include setting, lighting, clothing, expressions, background
    - Specify any text overlays (e.g. "Breaking News" banner)
    - Professional press photo style
-   - 100-150 words
+   - 100-150 words{portrait_note}
 
 2. ARTICLE TEXT PROMPT: Detailed scenario description for article content
    - Describe the specific events, quotes, and details
@@ -383,6 +393,14 @@ Output as JSON:
   "article_prompt": "..."
 }}"""
     else:
+        use_portrait = target.get("send_portrait_with_prompt", False)
+        portrait_note = (
+            f"\nIMPORTANT: A reference portrait photo of {target['name']} will be sent directly to the image"
+            f" generation model alongside your prompt. Your prompt MUST begin with:"
+            f" \"The attached photo is {target['name']}. Using this reference photo as the face, ...\""
+            f" so that the model knows to use it as a facial reference."
+        ) if use_portrait else ""
+
         media_type = "photograph/image" if request.generation_type == "image" else "short video clip"
         orchestration_prompt = f"""You are a prompt engineer creating descriptive prompts for AI media generation.
 
@@ -398,7 +416,7 @@ Requirements for your prompt:
 - Specify any text overlays (e.g. "Breaking News" banner)
 - Make it look like a real news clip, social media post, or press event
 - Keep the prompt under 200 words
-- Output ONLY the generation prompt, nothing else
+- Output ONLY the generation prompt, nothing else{portrait_note}
 """
 
     try:
@@ -471,14 +489,29 @@ async def generate_image(request: GenerateImageRequest):
     """
     Generate an image using Gemini 3.1 Flash Image model.
     Returns the URL to the generated image.
+    If target_id is provided and that target has send_portrait_with_prompt=True,
+    the portrait is sent alongside the prompt as a reference image.
     """
     if not GOOGLE_API_KEY:
         raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured")
 
     try:
+        # Build contents: optionally prepend portrait reference image
+        contents: list = []
+        if request.target_id:
+            target = next((t for t in TARGETS if t["id"] == request.target_id), None)
+            if target and target.get("send_portrait_with_prompt", False):
+                portrait_path = SAMPLE_IMAGES_DIR / f"{request.target_id}.png"
+                if portrait_path.exists():
+                    portrait_bytes = portrait_path.read_bytes()
+                    contents.append(types.Part.from_bytes(data=portrait_bytes, mime_type="image/png"))
+                else:
+                    print(f"[BACKEND] Warning: portrait not found at {portrait_path}")
+        contents.append(request.prompt)
+
         response = client.models.generate_content(
             model=IMAGE_MODEL,
-            contents=[request.prompt],
+            contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE", "TEXT"],
             ),
@@ -677,9 +710,21 @@ async def generate_article(request: GenerateArticleRequest):
     print(f"[BACKEND] Starting image generation...")
     try:
         # Step 1: Generate image using the provided image_prompt
+        # Build contents: optionally prepend portrait reference image
+        image_contents: list = []
+        if target.get("send_portrait_with_prompt", False):
+            portrait_path = SAMPLE_IMAGES_DIR / f"{request.target_id}.png"
+            if portrait_path.exists():
+                portrait_bytes = portrait_path.read_bytes()
+                image_contents.append(types.Part.from_bytes(data=portrait_bytes, mime_type="image/png"))
+                print(f"[BACKEND] Sending portrait reference image for {target['name']}")
+            else:
+                print(f"[BACKEND] Warning: portrait not found at {portrait_path}")
+        image_contents.append(request.image_prompt)
+
         image_response = client.models.generate_content(
             model=IMAGE_MODEL,
-            contents=[request.image_prompt],
+            contents=image_contents,
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE", "TEXT"],
             ),

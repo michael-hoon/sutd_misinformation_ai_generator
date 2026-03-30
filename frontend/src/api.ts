@@ -76,8 +76,8 @@ export async function generatePrompt(
   return res.data;
 }
 
-export async function generateImage(prompt: string): Promise<ImageResponse> {
-  const res = await api.post('/api/generate-image', { prompt });
+export async function generateImage(prompt: string, targetId?: string): Promise<ImageResponse> {
+  const res = await api.post('/api/generate-image', { prompt, target_id: targetId ?? null });
   return res.data;
 }
 

@@ -23,7 +23,8 @@ IMAGE_MODEL = "gemini-3.1-flash-image-preview"        # GEMINI: Nano Banana with
 VIDEO_MODEL = "veo-3.1-fast-generate-preview"           # For video generation (fast)
 
 # --- Sample Images Directory (for reference images) ---
-SAMPLE_IMAGES_DIR = Path(__file__).parent / "sample_images"
+# Portraits are served by Vite from /frontend/public/portraits/ but read by backend directly.
+SAMPLE_IMAGES_DIR = Path(__file__).parent.parent / "frontend" / "public" / "portraits"
 # --- Cloudflare Pages ---
 CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
 CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
@@ -48,7 +49,8 @@ TARGETS = [
         "role": "Prime Minister of Singapore",
         "category": "politician",
         "description": "Current Prime Minister of Singapore, leader of the PAP.",
-        "sample_image": "/portraits/lawrence_wong.png"
+        "sample_image": "/portraits/lawrence_wong.png",
+        "send_portrait_with_prompt": False,
     },
     {
         "id": "lee_hsien_loong",
@@ -56,7 +58,17 @@ TARGETS = [
         "role": "Senior Minister",
         "category": "politician",
         "description": "Former Prime Minister of Singapore and Senior Minister of Singapore.",
-        "sample_image": "/portraits/lee_hsien_loong.png"
+        "sample_image": "/portraits/lee_hsien_loong.png",
+        "send_portrait_with_prompt": False,
+    },
+    {
+        "id": "david_neo",
+        "name": "David Neo",
+        "role": "Minister for Culture, Community and Youth",
+        "category": "politician",
+        "description": "Minister for Culture, Community and Youth.",
+        "sample_image": "/portraits/david_neo.png",
+        "send_portrait_with_prompt": True,
     },
     {
         "id": "tharman_shanmugaratnam",
@@ -64,7 +76,8 @@ TARGETS = [
         "role": "President of Singapore",
         "category": "politician",
         "description": "Current President of Singapore.",
-        "sample_image": "/portraits/tharman_shanmugaratnam.png"
+        "sample_image": "/portraits/tharman_shanmugaratnam.png",
+        "send_portrait_with_prompt": False,
     },
     {
         "id": "k_shanmugam",
@@ -72,7 +85,8 @@ TARGETS = [
         "role": "Minister for Home Affairs and Law",
         "category": "politician",
         "description": "Minister for Home Affairs and Minister for Law.",
-        "sample_image": "/portraits/k_shanmugam.png"
+        "sample_image": "/portraits/k_shanmugam.png",
+        "send_portrait_with_prompt": False,
     },
     {
         "id": "heng_swee_keat",
@@ -80,7 +94,8 @@ TARGETS = [
         "role": "Deputy Prime Minister",
         "category": "politician",
         "description": "Deputy Prime Minister and Coordinating Minister.",
-        "sample_image": "/portraits/heng_swee_keat.png"
+        "sample_image": "/portraits/heng_swee_keat.png",
+        "send_portrait_with_prompt": False,
     },
     {
         "id": "jj_lin",
@@ -88,7 +103,8 @@ TARGETS = [
         "role": "Singaporean Mandopop Singer-Songwriter",
         "category": "celebrity",
         "description": "Internationally renowned Singaporean singer.",
-        "sample_image": "/portraits/jj_lin.png"
+        "sample_image": "/portraits/jj_lin.png",
+        "send_portrait_with_prompt": False,
     },
     {
         "id": "stefanie_sun",
@@ -96,7 +112,8 @@ TARGETS = [
         "role": "Singaporean Mandopop Singer",
         "category": "celebrity",
         "description": "Iconic Singaporean Mandopop singer.",
-        "sample_image": "/portraits/stefanie_sun.png"
+        "sample_image": "/portraits/stefanie_sun.png",
+        "send_portrait_with_prompt": False,
     },
     {
         "id": "fandi_ahmad",
@@ -104,7 +121,8 @@ TARGETS = [
         "role": "Singaporean Football Legend",
         "category": "celebrity",
         "description": "Singapore's most celebrated footballer.",
-        "sample_image": "/portraits/fandi_ahmad.png"
+        "sample_image": "/portraits/fandi_ahmad.png",
+        "send_portrait_with_prompt": False,
     },
 ]
 
