@@ -122,7 +122,7 @@ TARGETS = [
         "category": "celebrity",
         "description": "Singapore's most celebrated footballer.",
         "sample_image": "/portraits/fandi_ahmad.png",
-        "send_portrait_with_prompt": False,
+        "send_portrait_with_prompt": True,
     },
 ]
 

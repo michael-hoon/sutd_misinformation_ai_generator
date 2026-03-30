@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import QRCode from 'qrcode';
 import type { Target, Narrative, DriveUploadResponse, ArticleResponse, PublishResponse } from '../api';
 import {
   generatePrompt,
@@ -44,6 +45,7 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
   const [articleData, setArticleData] = useState<ArticleResponse | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<PublishResponse | null>(null);
+  const [publishQrUrl, setPublishQrUrl] = useState<string | null>(null);
 
   // Video 3-step workflow state
   const [videoStep, setVideoStep] = useState<1 | 2 | 3>(1);
@@ -274,6 +276,12 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
     try {
       const result = await publishArticle(articleData.article_id);
       setPublishResult(result);
+      try {
+        const qrDataUrl = await QRCode.toDataURL(result.published_url, { width: 160, margin: 1 });
+        setPublishQrUrl(qrDataUrl);
+      } catch {
+        // QR generation failure is non-blocking
+      }
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to publish article');
     } finally {
@@ -614,14 +622,24 @@ export default function GenerationPanel({ target, narrative, onReset }: Generati
                 <div className="flex-1">
                   <p className="text-green-300 font-semibold text-sm">Article Published</p>
                   <p className="text-text-muted text-xs mt-1">{publishResult.message}</p>
-                  <a
-                    href={publishResult.published_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-brand-400 hover:text-brand-300 text-xs mt-2 transition-colors"
-                  >
-                    View Published Article ↗
-                  </a>
+                  <div className="flex items-center gap-4 mt-2 flex-wrap">
+                    <a
+                      href={publishResult.published_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-brand-400 hover:text-brand-300 text-xs transition-colors"
+                    >
+                      View Published Article ↗
+                    </a>
+                    {publishQrUrl && (
+                      <img
+                        src={publishQrUrl}
+                        alt="QR code for published article"
+                        className="w-20 h-20 rounded-md border border-white/20 bg-white p-1"
+                        title={publishResult.published_url}
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
